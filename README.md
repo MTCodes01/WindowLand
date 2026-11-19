@@ -41,6 +41,16 @@
 * **Instant Access:** Hover your cursor over the top-bezel notch to smoothly expand the interactive media dashboard.
 * **Smart Auto-Retract:** Move the cursor away to automatically collapse after `450ms`, or press **`Esc`** to dismiss immediately.
 
+### 🎧 Apple iOS Style Accessory Connection Pop-up
+* **Automatic Hardware Recognition:** Real-time CoreAudio background detection recognizes external playback devices immediately upon connection.
+* **Multi-Category Dynamic Pop-ups:**
+  * **AirPods & TWS Earbuds:** Displays a 3D Apple-style white open charging case with earbuds and glowing status LED.
+  * **Over-Ear Headphones:** Renders sleek anodized overhead headphones (Sony XM4/XM5, Bose, AirPods Max).
+  * **Bluetooth Speakers:** Renders woven fabric cylindrical speaker with passive bass radiators (JBL, SoundMX, Marshall).
+  * **Audiophile IEMs & DACs:** Displays crystal-clear resin monitor shells with braided silver cable and 3.5mm gold jack (Moondrop, Tangzu, Fiio).
+* **Authentic iOS Modal Sheet:** Rounded card (`border-radius: 28px`), pure white surface, bold title, subtitle, close button (`×`), and signature blue Apple pill button (`"Done"`).
+* **Spring Animation & Smart Auto-Dismiss:** Fluid slide-in easing, 5-second auto-dismiss with hover pause, and synchronous Dynamic Island notch glow.
+
 ### ⚙️ Standalone & System-Integrated
 * **Single Windowless Binary:** Compiled as a lightweight standalone executable (`dist/DynamicIsland.exe`) with no console clutter.
 * **Silent Windows Auto-Start:** Registers cleanly to `HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run` for seamless background startup on boot.
