@@ -5,13 +5,60 @@ Main Entry Point, System Tray Icon, and Application Lifecycle.
 
 import sys
 import os
+import time
+import ctypes
+from ctypes import wintypes
+import traceback
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import Qt, QRectF
+from PyQt6.QtCore import Qt, QRectF, QAbstractNativeEventFilter
 from PyQt6.QtGui import (
     QIcon, QPixmap, QPainter, QColor, QPen,
     QBrush, QAction, QGuiApplication
 )
+
+# -------------------------------------------------------------
+# Single Instance Lock (Windows Named Mutex)
+# Ensures only ONE instance runs in the background at all times.
+# If user or startup launches a second instance, it exits silently.
+# -------------------------------------------------------------
+MUTEX_NAME = "Global\\WinDinDynamicIsland_SingleInstanceMutex"
+_kernel32 = ctypes.windll.kernel32
+_mutex_handle = _kernel32.CreateMutexW(None, True, MUTEX_NAME)
+ERROR_ALREADY_EXISTS = 183
+if _kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+    sys.exit(0)
+
+# Unhandled Exception Safety Hook
+def _exception_hook(exctype, value, tb):
+    err_str = "".join(traceback.format_exception(exctype, value, tb))
+    log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+    try:
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"\n--- {time.ctime()} ---\n{err_str}\n")
+    except Exception:
+        pass
+
+sys.excepthook = _exception_hook
+
+
+class TaskbarRestartFilter(QAbstractNativeEventFilter):
+    """Restores the system tray icon if Windows Explorer restarts."""
+    def __init__(self, tray_icon: QSystemTrayIcon):
+        super().__init__()
+        self.tray_icon = tray_icon
+        self.wm_taskbar_created = ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated")
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type == b"windows_generic_MSG":
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == self.wm_taskbar_created:
+                    self.tray_icon.hide()
+                    self.tray_icon.show()
+            except Exception:
+                pass
+        return False, 0
 
 from services.media_service import MediaService
 from services.system_service import SystemService
@@ -89,9 +136,12 @@ def main():
     app.setWindowIcon(create_tray_icon())
     tray_icon.setToolTip("Hardware Notch Overlay")
 
-    # Ensure autostart is enabled by default if not set yet
-    if not is_autostart_enabled():
-        set_autostart(True)
+    # Install native event filter to keep tray icon alive if Windows Explorer restarts
+    taskbar_filter = TaskbarRestartFilter(tray_icon)
+    app.installNativeEventFilter(taskbar_filter)
+
+    # Ensure autostart is enabled by default across Windows boot
+    set_autostart(True)
 
     tray_menu = QMenu()
     tray_menu.setStyleSheet("""
