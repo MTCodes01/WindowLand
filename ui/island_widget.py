@@ -44,6 +44,7 @@ from ui.styles import (
     get_subtext_font, DASHBOARD_STYLESHEET
 )
 from ui.components.visualizer import AudioVisualizerWidget
+from ui.device_popup import DeviceConnectionPopup
 from services.media_service import MediaService
 from services.system_service import SystemService
 
@@ -218,10 +219,12 @@ class DynamicIslandWidget(QWidget):
     """
     state_changed = pyqtSignal(str)
 
-    def __init__(self, media_service: MediaService, system_service: SystemService):
+    def __init__(self, media_service: MediaService, system_service: SystemService, device_service: Optional[Any] = None):
         super().__init__()
         self.media_service = media_service
         self.system_service = system_service
+        self.device_service = device_service
+        self._device_popup = DeviceConnectionPopup()
 
         # States: "compact", "toast", "expanded"
         self._island_state = "compact"
@@ -785,6 +788,8 @@ class DynamicIslandWidget(QWidget):
         self.system_service.dnd_changed.connect(self._on_dnd_changed)
         self.system_service.notification_received.connect(self._on_notification_received)
         self.system_service.status_alert.connect(self._on_status_alert)
+        if hasattr(self, "device_service") and self.device_service:
+            self.device_service.device_connected.connect(self._on_device_connected)
 
     def _on_battery_tick(self, info: dict):
         self._battery_info = info
@@ -883,6 +888,23 @@ class DynamicIslandWidget(QWidget):
         else:
             self.set_glow_state("notification", duration_sec=2.0)
         self.update()
+
+    def _on_device_connected(self, data: dict):
+        """Triggered when an external audio device connects."""
+        # 1. Show the Apple iOS modal card popup
+        if hasattr(self, "_device_popup") and self._device_popup:
+            self._device_popup.show_device(data)
+
+        # 2. Trigger Dynamic Island notch toast banner
+        if not self.system_service.is_dnd:
+            cat_name = str(data.get("category", "DEVICE")).upper()
+            title = data.get("display_title") or data.get("name") or "Device Connected"
+            subtitle = data.get("display_subtitle") or "Audio Output Active"
+            self.trigger_toast(app=cat_name, title=title, message=subtitle)
+
+    def trigger_device_popup(self, data: dict):
+        """Public helper to trigger device connection pop-up."""
+        self._on_device_connected(data)
 
     # -------------------------------------------------------------
     # 60 FPS Render Tick

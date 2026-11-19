@@ -15,6 +15,7 @@ from PyQt6.QtGui import (
 
 from services.media_service import MediaService
 from services.system_service import SystemService
+from services.device_listener import DeviceService
 from services.autostart_service import is_autostart_enabled, set_autostart
 from ui.island_widget import DynamicIslandWidget
 
@@ -71,13 +72,15 @@ def main():
 
     media_service = MediaService()
     system_service = SystemService()
+    device_service = DeviceService()
 
-    island = DynamicIslandWidget(media_service, system_service)
+    island = DynamicIslandWidget(media_service, system_service, device_service)
     # Island starts hidden; it shows itself when music plays or a notification arrives
     island.hide()
 
     media_service.start()
     system_service.start()
+    device_service.start()
 
     # ── System Tray ──────────────────────────────────────────────
     tray_icon = QSystemTrayIcon(create_tray_icon(), app)
@@ -168,12 +171,30 @@ def main():
     act_test_mock.triggered.connect(media_service.toggle_mock_mode)
     menu_sim.addAction(act_test_mock)
 
+    menu_sim.addSeparator()
+    act_sim_airpods = QAction("🎧 AirPods Pro (Pop-up)", menu_sim)
+    act_sim_airpods.triggered.connect(lambda: device_service.trigger_simulated_device("airpods", "Manu’s AirPods Pro #2"))
+    menu_sim.addAction(act_sim_airpods)
+
+    act_sim_headphones = QAction("🎧 Over-Ear Headphones (Pop-up)", menu_sim)
+    act_sim_headphones.triggered.connect(lambda: device_service.trigger_simulated_device("headphones", "Sony WH-1000XM5"))
+    menu_sim.addAction(act_sim_headphones)
+
+    act_sim_speaker = QAction("🔊 Bluetooth Speaker (Pop-up)", menu_sim)
+    act_sim_speaker.triggered.connect(lambda: device_service.trigger_simulated_device("speaker", "Zeb SoundMX"))
+    menu_sim.addAction(act_sim_speaker)
+
+    act_sim_iem = QAction("🎵 In-Ear Monitors / DAC (Pop-up)", menu_sim)
+    act_sim_iem.triggered.connect(lambda: device_service.trigger_simulated_device("iem", "Moondrop Chu II / Fiio DAC"))
+    menu_sim.addAction(act_sim_iem)
+
     tray_menu.addSeparator()
 
     act_quit = QAction("✕  Exit", tray_menu)
     def on_quit():
         media_service.stop()
         system_service.stop()
+        device_service.stop()
         app.quit()
     act_quit.triggered.connect(on_quit)
     tray_menu.addAction(act_quit)
@@ -188,6 +209,7 @@ def main():
 
     app.aboutToQuit.connect(media_service.stop)
     app.aboutToQuit.connect(system_service.stop)
+    app.aboutToQuit.connect(device_service.stop)
 
     sys.exit(app.exec())
 
