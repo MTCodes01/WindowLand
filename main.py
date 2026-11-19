@@ -18,15 +18,22 @@ from PyQt6.QtGui import (
 )
 
 # -------------------------------------------------------------
-# Single Instance Lock (Windows Named Mutex)
-# Ensures only ONE instance runs in the background at all times.
-# If user or startup launches a second instance, it exits silently.
+# Single Instance Lock & Wakeup via Windows Named Mutex & IPC
+# If the app is already running, notify the active instance to
+# reveal & expand the Dynamic Island immediately, then exit.
 # -------------------------------------------------------------
 MUTEX_NAME = "Global\\WinDinDynamicIsland_SingleInstanceMutex"
 _kernel32 = ctypes.windll.kernel32
+_user32 = ctypes.windll.user32
+WM_SHOW_DYNAMIC_ISLAND = _user32.RegisterWindowMessageW("WinDin_ShowDynamicIsland")
+
 _mutex_handle = _kernel32.CreateMutexW(None, True, MUTEX_NAME)
 ERROR_ALREADY_EXISTS = 183
 if _kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+    # Another instance is already running!
+    # Wake up the running instance and reveal the Dynamic Island!
+    HWND_BROADCAST = 0xFFFF
+    _user32.PostMessageW(HWND_BROADCAST, WM_SHOW_DYNAMIC_ISLAND, 0, 0)
     sys.exit(0)
 
 # Unhandled Exception Safety Hook
@@ -42,12 +49,18 @@ def _exception_hook(exctype, value, tb):
 sys.excepthook = _exception_hook
 
 
-class TaskbarRestartFilter(QAbstractNativeEventFilter):
-    """Restores the system tray icon if Windows Explorer restarts."""
-    def __init__(self, tray_icon: QSystemTrayIcon):
+class AppNativeEventFilter(QAbstractNativeEventFilter):
+    """
+    Handles native Windows broadcasts:
+    1. TaskbarCreated: Restores system tray icon if Windows Explorer restarts.
+    2. WinDin_ShowDynamicIsland: Reveals/expands island when user launches the app.
+    """
+    def __init__(self, island, tray_icon: QSystemTrayIcon):
         super().__init__()
+        self.island = island
         self.tray_icon = tray_icon
-        self.wm_taskbar_created = ctypes.windll.user32.RegisterWindowMessageW("TaskbarCreated")
+        self.wm_taskbar_created = _user32.RegisterWindowMessageW("TaskbarCreated")
+        self.wm_show_island = WM_SHOW_DYNAMIC_ISLAND
 
     def nativeEventFilter(self, event_type, message):
         if event_type == b"windows_generic_MSG":
@@ -56,6 +69,13 @@ class TaskbarRestartFilter(QAbstractNativeEventFilter):
                 if msg.message == self.wm_taskbar_created:
                     self.tray_icon.hide()
                     self.tray_icon.show()
+                elif msg.message == self.wm_show_island:
+                    # User clicked app or launched again: reveal Dynamic Island!
+                    if not self.island.isVisible():
+                        self.island.show()
+                    self.island.raise_()
+                    self.island.set_glow_state("notification", duration_sec=3.0)
+                    self.island.set_island_state("expanded")
             except Exception:
                 pass
         return False, 0
@@ -122,25 +142,31 @@ def main():
     device_service = DeviceService()
 
     island = DynamicIslandWidget(media_service, system_service, device_service)
-    # Island starts hidden; it shows itself when music plays or a notification arrives
-    island.hide()
+    # Always present on launch: smoothly drop down from top screen bezel
+    island.show()
+    island.raise_()
+    island.set_island_state("compact")
+    island.set_glow_state("notification", duration_sec=3.5)
+
+    # If no music is actively playing, smoothly retract back to bezel after 4 seconds
+    if not island._is_music_active():
+        island._music_idle_timer.setInterval(4000)
+        island._music_idle_timer.start()
 
     media_service.start()
     system_service.start()
     device_service.start()
 
     # ── System Tray ──────────────────────────────────────────────
-
-    # ── System Tray ──────────────────────────────────────────────
     tray_icon = QSystemTrayIcon(create_tray_icon(), app)
     app.setWindowIcon(create_tray_icon())
     tray_icon.setToolTip("Hardware Notch Overlay")
 
-    # Install native event filter to keep tray icon alive if Windows Explorer restarts
-    taskbar_filter = TaskbarRestartFilter(tray_icon)
-    app.installNativeEventFilter(taskbar_filter)
+    # Native event filter: Restores tray icon on Explorer restart & reveals island on launch
+    event_filter = AppNativeEventFilter(island, tray_icon)
+    app.installNativeEventFilter(event_filter)
 
-    # Ensure autostart is enabled by default across Windows boot
+    # Ensure autostart is enabled permanently across Windows boot
     set_autostart(True)
 
     tray_menu = QMenu()
@@ -258,6 +284,12 @@ def main():
         if reason == QSystemTrayIcon.ActivationReason.Trigger else None
     )
     tray_icon.show()
+    tray_icon.showMessage(
+        "Dynamic Island Active",
+        "Running in background at top of screen. Press Alt+Space to expand.",
+        QSystemTrayIcon.MessageIcon.Information,
+        3000
+    )
 
     app.aboutToQuit.connect(media_service.stop)
     app.aboutToQuit.connect(system_service.stop)
