@@ -596,13 +596,15 @@ class DynamicIslandWidget(QWidget):
     # -------------------------------------------------------------
     def _update_album_art(self, art_path: Optional[str]):
         if not art_path or not os.path.exists(art_path):
-            self._album_art_pixmap = None
-            self._glass_bg_pixmap = None
-            self._current_art_path = None
-            self.lbl_cover_art.hide()
+            if self._album_art_pixmap is not None or self._glass_bg_pixmap is not None:
+                self._album_art_pixmap = None
+                self._glass_bg_pixmap = None
+                self._current_art_path = None
+                self.lbl_cover_art.hide()
+                self.update()
             return
 
-        if art_path == self._current_art_path and self._glass_bg_pixmap is not None:
+        if art_path == self._current_art_path and self._album_art_pixmap is not None:
             return
 
         self._current_art_path = art_path
@@ -631,6 +633,7 @@ class DynamicIslandWidget(QWidget):
                 QImage.Format.Format_RGBA8888
             )
             self._glass_bg_pixmap = QPixmap.fromImage(qimg)
+            self.update()
         except Exception:
             pass
 

@@ -6,6 +6,9 @@ Extracts live album artwork and streams playback info cleanly without package ID
 """
 
 import os
+import sys
+import glob
+import hashlib
 import asyncio
 import threading
 import queue
@@ -28,37 +31,45 @@ except ImportError:
         wmc = None
         streams = None
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-COVERS_DIR = os.path.join(BASE_DIR, "assets", "covers")
+# Writable directory for dynamic album covers (works in dev and PyInstaller .exe)
+LOCAL_APPDATA = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
+COVERS_DIR = os.path.join(LOCAL_APPDATA, "DynamicIsland", "covers")
 os.makedirs(COVERS_DIR, exist_ok=True)
+
+# Base directory for bundled mock assets
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    BUNDLE_DIR = sys._MEIPASS
+else:
+    BUNDLE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_COVERS_DIR = os.path.join(BUNDLE_DIR, "assets", "covers")
 
 MOCK_PLAYLIST = [
     {
         "title": "Starboy",
         "artist": "The Weeknd ft. Daft Punk",
         "album": "Starboy",
-        "cover": os.path.join(COVERS_DIR, "mock_0.jpg"),
+        "cover": os.path.join(STATIC_COVERS_DIR, "mock_0.jpg"),
         "duration": 230,
     },
     {
         "title": "Blinding Lights",
         "artist": "The Weeknd",
         "album": "After Hours",
-        "cover": os.path.join(COVERS_DIR, "mock_1.jpg"),
+        "cover": os.path.join(STATIC_COVERS_DIR, "mock_1.jpg"),
         "duration": 200,
     },
     {
         "title": "Midnight City",
         "artist": "M83",
         "album": "Hurry Up, We're Dreaming",
-        "cover": os.path.join(COVERS_DIR, "mock_2.jpg"),
+        "cover": os.path.join(STATIC_COVERS_DIR, "mock_2.jpg"),
         "duration": 244,
     },
     {
         "title": "Get Lucky",
         "artist": "Daft Punk ft. Pharrell",
         "album": "Random Access Memories",
-        "cover": os.path.join(COVERS_DIR, "mock_3.jpg"),
+        "cover": os.path.join(STATIC_COVERS_DIR, "mock_3.jpg"),
         "duration": 248,
     },
 ]
@@ -228,24 +239,23 @@ class MediaService(QObject):
             except Exception:
                 pass
 
-            # Extract Album Artwork
+            # Extract Album Artwork (track-specific hashed filename to prevent stale caching)
             art_path = None
             art_signature = f"{title}_{artist}_{album}"
-            cache_file = os.path.join(COVERS_DIR, "live_cover.jpg")
+            art_hash = hashlib.md5(art_signature.encode("utf-8", errors="ignore")).hexdigest()[:10]
+            cache_file = os.path.join(COVERS_DIR, f"cover_{art_hash}.jpg")
 
             if props and getattr(props, "thumbnail", None) and streams:
                 try:
-                    if art_signature != self._last_art_signature or not os.path.exists(cache_file):
+                    if not os.path.exists(cache_file):
                         stream = await props.thumbnail.open_read_async()
-                        size = stream.size
-                        if size > 0:
+                        if stream and stream.size > 0:
                             reader = streams.DataReader(stream)
-                            await reader.load_async(size)
-                            buf = bytearray(size)
+                            await reader.load_async(stream.size)
+                            buf = bytearray(stream.size)
                             reader.read_bytes(buf)
                             with open(cache_file, "wb") as f:
                                 f.write(buf)
-                            self._last_art_signature = art_signature
                     if os.path.exists(cache_file):
                         art_path = cache_file
                 except Exception:
