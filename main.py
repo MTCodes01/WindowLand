@@ -83,6 +83,8 @@ def main():
     device_service.start()
 
     # ── System Tray ──────────────────────────────────────────────
+
+    # ── System Tray ──────────────────────────────────────────────
     tray_icon = QSystemTrayIcon(create_tray_icon(), app)
     app.setWindowIcon(create_tray_icon())
     tray_icon.setToolTip("Hardware Notch Overlay")

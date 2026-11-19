@@ -11,6 +11,7 @@ Features:
 """
 
 import os
+import sys
 import math
 import time
 import ctypes
@@ -28,7 +29,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QPainterPath,
-    QRadialGradient, QLinearGradient, QFontMetrics,
+    QRadialGradient, QLinearGradient, QFontMetrics, QFont,
     QGuiApplication, QShortcut, QKeySequence, QCursor,
     QPixmap, QImage
 )
@@ -47,6 +48,15 @@ from ui.components.visualizer import AudioVisualizerWidget
 from ui.device_popup import DeviceConnectionPopup
 from services.media_service import MediaService
 from services.system_service import SystemService
+
+
+def resource_path(relative_path: str) -> str:
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 
 def format_seconds(seconds: int) -> str:
@@ -224,11 +234,21 @@ class DynamicIslandWidget(QWidget):
         self.media_service = media_service
         self.system_service = system_service
         self.device_service = device_service
-        self._device_popup = DeviceConnectionPopup()
 
-        # States: "compact", "toast", "expanded"
+        # States: "compact", "toast", "expanded", "device_popup"
         self._island_state = "compact"
         self._glow_state = "idle"
+
+        # Device Connection Pop-up Cache & Auto-Dismiss Timer (Native Dynamic Island Pop-up)
+        self._device_info: Dict[str, Any] = {}
+        self._device_pixmaps: Dict[str, QPixmap] = {}
+        self._device_close_hovered = False
+        self._device_done_hovered = False
+        self._load_device_pixmaps()
+
+        self._device_dismiss_timer = QTimer(self)
+        self._device_dismiss_timer.setSingleShot(True)
+        self._device_dismiss_timer.timeout.connect(self._on_device_dismiss_timeout)
 
         # Hover-to-expand / Hover-to-retract timers
         self._hover_expand_timer = QTimer(self)
@@ -352,6 +372,20 @@ class DynamicIslandWidget(QWidget):
         if not self._is_music_active():
             self.hide()
 
+    def _load_device_pixmaps(self):
+        """Preloads device artwork for instant display."""
+        for cat in ["airpods", "headphones", "speaker", "iem"]:
+            p = resource_path(os.path.join("assets", "devices", f"{cat}_white.png"))
+            if os.path.exists(p):
+                pix = QPixmap(p)
+                if not pix.isNull():
+                    self._device_pixmaps[cat] = pix
+
+    def _on_device_dismiss_timeout(self):
+        """Auto-collapse the device pop-up after timeout."""
+        if self._island_state == "device_popup":
+            self.collapse_to_compact()
+
     def _is_music_active(self) -> bool:
         """True only if media session exists AND is actively playing."""
         return bool(self._media_info.get("has_media", False) and self._media_info.get("is_playing", False))
@@ -412,6 +446,9 @@ class DynamicIslandWidget(QWidget):
         elif state == "toast":
             w = TOAST_WIDTH
             h = TOAST_HEIGHT
+        elif state == "device_popup":
+            w = 350
+            h = 340
         else:  # expanded
             w = EXPANDED_WIDTH
             h = EXPANDED_HEIGHT
@@ -432,11 +469,12 @@ class DynamicIslandWidget(QWidget):
             self._geo_animation.stop()
 
         self._geo_animation = QPropertyAnimation(self, b"geometry")
-        self._geo_animation.setDuration(280)
 
-        if state == "expanded":
+        if state in ("expanded", "device_popup"):
+            self._geo_animation.setDuration(320)
             self._geo_animation.setEasingCurve(QEasingCurve.Type.OutBack)
         else:
+            self._geo_animation.setDuration(260)
             self._geo_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self._geo_animation.setStartValue(self.geometry())
@@ -473,15 +511,21 @@ class DynamicIslandWidget(QWidget):
             return
         self._hovered = True
         self._hover_collapse_timer.stop()
-        if self._island_state == "compact":
+        if self._island_state == "device_popup":
+            self._device_dismiss_timer.stop()
+        elif self._island_state == "compact":
             self._hover_expand_timer.start(100)
         self.update()
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         self._hovered = False
+        self._device_close_hovered = False
+        self._device_done_hovered = False
         self._hover_expand_timer.stop()
-        if self._island_state == "expanded":
+        if self._island_state == "device_popup":
+            self._device_dismiss_timer.start(2500)
+        elif self._island_state == "expanded":
             self._hover_collapse_timer.start(450)
         self.update()
         super().leaveEvent(event)
@@ -508,6 +552,8 @@ class DynamicIslandWidget(QWidget):
 
         if old_state == "toast" and state != "toast":
             self._toast_dismiss_timer.stop()
+        if old_state == "device_popup" and state != "device_popup":
+            self._device_dismiss_timer.stop()
 
         if state == "compact":
             self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -533,6 +579,7 @@ class DynamicIslandWidget(QWidget):
 
     def collapse_to_compact(self):
         self._hover_collapse_timer.stop()
+        self._device_dismiss_timer.stop()
         if self._island_state != "compact":
             self.set_island_state("compact")
         if not self._is_music_active():
@@ -875,6 +922,8 @@ class DynamicIslandWidget(QWidget):
 
     def _on_notification_received(self, notif: dict):
         if not self.system_service.is_dnd:
+            if self._island_state == "device_popup":
+                return
             self.trigger_toast(
                 app=notif.get("app", "Alert"),
                 title=notif.get("title", "Incoming Alert"),
@@ -891,20 +940,19 @@ class DynamicIslandWidget(QWidget):
 
     def _on_device_connected(self, data: dict):
         """Triggered when an external audio device connects."""
-        # 1. Show the Apple iOS modal card popup
-        if hasattr(self, "_device_popup") and self._device_popup:
-            self._device_popup.show_device(data)
-
-        # 2. Trigger Dynamic Island notch toast banner
-        if not self.system_service.is_dnd:
-            cat_name = str(data.get("category", "DEVICE")).upper()
-            title = data.get("display_title") or data.get("name") or "Device Connected"
-            subtitle = data.get("display_subtitle") or "Audio Output Active"
-            self.trigger_toast(app=cat_name, title=title, message=subtitle)
+        self.trigger_device_popup(data)
 
     def trigger_device_popup(self, data: dict):
-        """Public helper to trigger device connection pop-up."""
-        self._on_device_connected(data)
+        """Pops up and expands the Dynamic Island into the Apple device accessory card."""
+        if self._is_fullscreen_suppressed:
+            return
+        self._device_info = data
+        self.set_glow_state("notification", duration_sec=4.5)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.set_island_state("device_popup")
+        self._device_dismiss_timer.start(4500)
 
     # -------------------------------------------------------------
     # 60 FPS Render Tick
@@ -949,9 +997,37 @@ class DynamicIslandWidget(QWidget):
     # -------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            if self._island_state in ("compact", "toast"):
+            if self._island_state == "device_popup":
+                pos = event.position()
+                w = float(self.width())
+                h = float(self.height())
+                close_rect = QRectF(w - 46, 18, 26, 26)
+                done_rect = QRectF(28, h - 56, w - 56, 40)
+                if close_rect.contains(pos) or done_rect.contains(pos):
+                    self.collapse_to_compact()
+                    return
+            elif self._island_state in ("compact", "toast"):
                 self.set_island_state("expanded")
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._island_state == "device_popup":
+            pos = event.position()
+            w = float(self.width())
+            h = float(self.height())
+            close_rect = QRectF(w - 46, 18, 26, 26)
+            done_rect = QRectF(28, h - 56, w - 56, 40)
+            old_c = self._device_close_hovered
+            old_d = self._device_done_hovered
+            self._device_close_hovered = close_rect.contains(pos)
+            self._device_done_hovered = done_rect.contains(pos)
+            if old_c != self._device_close_hovered or old_d != self._device_done_hovered:
+                self.update()
+            if self._device_close_hovered or self._device_done_hovered:
+                self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            else:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        super().mouseMoveEvent(event)
 
     # -------------------------------------------------------------
     # Organic Curvy Hardware Notch Path Generator
@@ -998,9 +1074,11 @@ class DynamicIslandWidget(QWidget):
         painter.setClipPath(notch_path)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        # 3. Frosted Glass Album Art vs Dark Canvas Base
-        has_media = self._media_info.get("has_media", False)
-        if has_media and self._glass_bg_pixmap and not self._glass_bg_pixmap.isNull():
+        # 3. Canvas Surface Fill
+        if self._island_state == "device_popup":
+            # Apple iOS White Card Surface directly inside the Dynamic Island notch!
+            painter.fillRect(0, 0, int(w), int(h), QColor(255, 255, 255))
+        elif has_media and self._glass_bg_pixmap and not self._glass_bg_pixmap.isNull():
             painter.drawPixmap(0, 0, int(w), int(h), self._glass_bg_pixmap)
 
             scrim = QLinearGradient(0, 0, 0, h)
@@ -1015,21 +1093,24 @@ class DynamicIslandWidget(QWidget):
             canvas_grad.setColorAt(1.0, QColor("#040406"))
             painter.fillRect(0, 0, int(w), int(h), canvas_grad)
 
-        # 4. Top Glass Sheen
-        sheen_h = min(h * 0.45, 16.0)
-        sheen_grad = QLinearGradient(0, 0, 0, sheen_h)
-        sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 26))
-        sheen_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillRect(QRectF(0, 0, w, sheen_h), sheen_grad)
+        if self._island_state != "device_popup":
+            # 4. Top Glass Sheen
+            sheen_h = min(h * 0.45, 16.0)
+            sheen_grad = QLinearGradient(0, 0, 0, sheen_h)
+            sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 26))
+            sheen_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.fillRect(QRectF(0, 0, w, sheen_h), sheen_grad)
 
-        # 5. Animated Moving Gradient Effect
-        self._paint_moving_gradient(painter, w, h)
+            # 5. Animated Moving Gradient Effect
+            self._paint_moving_gradient(painter, w, h)
 
         # 6. State-Specific Content
         if self._island_state == "compact":
             self._paint_compact_notch(painter, w, h)
         elif self._island_state == "toast":
             self._paint_toast_notch(painter, w, h)
+        elif self._island_state == "device_popup":
+            self._paint_device_popup_notch(painter, w, h)
 
         painter.restore()
 
@@ -1039,10 +1120,11 @@ class DynamicIslandWidget(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(notch_path)
 
-        # 8. Subtle Milled Edge Inner Highlight
-        highlight_alpha = 24 if self._hovered else 14
-        painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
-        painter.drawPath(notch_path)
+        if self._island_state != "device_popup":
+            # 8. Subtle Milled Edge Inner Highlight
+            highlight_alpha = 24 if self._hovered else 14
+            painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
+            painter.drawPath(notch_path)
 
     def _paint_moving_gradient(self, painter: QPainter, w: float, h: float):
         t = self._gradient_shift
@@ -1233,3 +1315,73 @@ class DynamicIslandWidget(QWidget):
         elided = fm_body.elidedText(display_text, Qt.TextElideMode.ElideRight, int(text_width))
         body_rect = QRectF(text_left, h * 0.50, text_width, h * 0.50)
         painter.drawText(body_rect, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, elided)
+
+    def _paint_device_popup_notch(self, painter: QPainter, w: float, h: float):
+        """Draws the Apple iOS Accessory Connection Card directly inside the Dynamic Island notch."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        cat = self._device_info.get("category", "airpods")
+        title = self._device_info.get("display_title") or self._device_info.get("name") or "Audio Device"
+        subtitle = self._device_info.get("display_subtitle") or "Connected to Windows"
+
+        # 1. Close Button ('✕') in Top-Right
+        close_rect = QRectF(w - 46, 20, 24, 24)
+        c_center = close_rect.center()
+        is_close_hovered = self._device_close_hovered
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(230, 230, 235) if is_close_hovered else QColor(242, 242, 247)))
+        painter.drawEllipse(close_rect)
+
+        painter.setPen(QPen(QColor(60, 60, 67, 220) if is_close_hovered else QColor(142, 142, 147), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        r = 4.5
+        painter.drawLine(QPointF(c_center.x() - r, c_center.y() - r), QPointF(c_center.x() + r, c_center.y() + r))
+        painter.drawLine(QPointF(c_center.x() + r, c_center.y() - r), QPointF(c_center.x() - r, c_center.y() + r))
+
+        # 2. Header Titles (Apple SF / Segoe UI Typography)
+        title_font = QFont("Segoe UI", 16)
+        title_font.setBold(True)
+        title_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
+        painter.setFont(title_font)
+        painter.setPen(QPen(QColor(29, 29, 31)))
+
+        title_rect = QRectF(32, 18, w - 78, 28)
+        fm = painter.fontMetrics()
+        elided_title = fm.elidedText(title, Qt.TextElideMode.ElideRight, int(w - 82))
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, elided_title)
+
+        sub_font = QFont("Segoe UI", 10)
+        sub_font.setWeight(QFont.Weight.Medium)
+        sub_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
+        painter.setFont(sub_font)
+        painter.setPen(QPen(QColor(134, 134, 139)))
+        sub_rect = QRectF(24, 46, w - 48, 18)
+        painter.drawText(sub_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, subtitle)
+
+        # 3. Center 3D Device Art
+        pix = self._device_pixmaps.get(cat)
+        art_size = 175.0
+        art_x = (w - art_size) / 2.0
+        art_y = 68.0
+        art_rect = QRectF(art_x, art_y, art_size, art_size)
+
+        if pix and not pix.isNull():
+            painter.drawPixmap(art_rect.toRect(), pix)
+
+        # 4. Action Button ("Done" / Apple Blue Pill)
+        done_rect = QRectF(28, h - 56, w - 56, 38)
+        is_done_hovered = self._device_done_hovered
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        btn_bg = QColor(20, 130, 245) if is_done_hovered else QColor(0, 113, 227)
+        painter.setBrush(QBrush(btn_bg))
+        painter.drawRoundedRect(done_rect, 19.0, 19.0)
+
+        btn_font = QFont("Segoe UI", 12)
+        btn_font.setBold(True)
+        btn_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
+        painter.setFont(btn_font)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(done_rect, Qt.AlignmentFlag.AlignCenter, "Done")
