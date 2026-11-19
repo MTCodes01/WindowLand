@@ -1,0 +1,18 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# PyInstaller build files (keep dist if desired, ignore build intermediate files)
+build/
+*.spec.bak
+
+# Local temporary files
+assets/covers/live_cover.jpg
+reminders.json
