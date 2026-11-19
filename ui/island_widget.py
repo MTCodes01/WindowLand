@@ -375,7 +375,9 @@ class DynamicIslandWidget(QWidget):
     def _load_device_pixmaps(self):
         """Preloads device artwork for instant display."""
         for cat in ["airpods", "headphones", "speaker", "iem"]:
-            p = resource_path(os.path.join("assets", "devices", f"{cat}_white.png"))
+            p = resource_path(os.path.join("assets", "devices", f"{cat}.png"))
+            if not os.path.exists(p):
+                p = resource_path(os.path.join("assets", "devices", f"{cat}_white.png"))
             if os.path.exists(p):
                 pix = QPixmap(p)
                 if not pix.isNull():
@@ -447,8 +449,8 @@ class DynamicIslandWidget(QWidget):
             w = TOAST_WIDTH
             h = TOAST_HEIGHT
         elif state == "device_popup":
-            w = 350
-            h = 340
+            w = 450
+            h = 114
         else:  # expanded
             w = EXPANDED_WIDTH
             h = EXPANDED_HEIGHT
@@ -998,14 +1000,8 @@ class DynamicIslandWidget(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             if self._island_state == "device_popup":
-                pos = event.position()
-                w = float(self.width())
-                h = float(self.height())
-                close_rect = QRectF(w - 46, 18, 26, 26)
-                done_rect = QRectF(28, h - 56, w - 56, 40)
-                if close_rect.contains(pos) or done_rect.contains(pos):
-                    self.collapse_to_compact()
-                    return
+                self.collapse_to_compact()
+                return
             elif self._island_state in ("compact", "toast"):
                 self.set_island_state("expanded")
         super().mousePressEvent(event)
@@ -1013,17 +1009,15 @@ class DynamicIslandWidget(QWidget):
     def mouseMoveEvent(self, event):
         if self._island_state == "device_popup":
             pos = event.position()
-            w = float(self.width())
-            h = float(self.height())
-            close_rect = QRectF(w - 46, 18, 26, 26)
-            done_rect = QRectF(28, h - 56, w - 56, 40)
-            old_c = self._device_close_hovered
-            old_d = self._device_done_hovered
-            self._device_close_hovered = close_rect.contains(pos)
-            self._device_done_hovered = done_rect.contains(pos)
-            if old_c != self._device_close_hovered or old_d != self._device_done_hovered:
+            old_d = getattr(self, "_device_done_hovered", False)
+            if hasattr(self, "_device_done_rect"):
+                self._device_done_hovered = self._device_done_rect.contains(pos)
+            else:
+                self._device_done_hovered = False
+
+            if old_d != self._device_done_hovered:
                 self.update()
-            if self._device_close_hovered or self._device_done_hovered:
+            if self._device_done_hovered:
                 self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             else:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -1076,10 +1070,7 @@ class DynamicIslandWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
         # 3. Canvas Surface Fill
-        if self._island_state == "device_popup":
-            # Apple iOS White Card Surface directly inside the Dynamic Island notch!
-            painter.fillRect(0, 0, int(w), int(h), QColor(255, 255, 255))
-        elif has_media and self._glass_bg_pixmap and not self._glass_bg_pixmap.isNull():
+        if has_media and self._glass_bg_pixmap and not self._glass_bg_pixmap.isNull() and self._island_state != "device_popup":
             painter.drawPixmap(0, 0, int(w), int(h), self._glass_bg_pixmap)
 
             scrim = QLinearGradient(0, 0, 0, h)
@@ -1094,16 +1085,15 @@ class DynamicIslandWidget(QWidget):
             canvas_grad.setColorAt(1.0, QColor("#040406"))
             painter.fillRect(0, 0, int(w), int(h), canvas_grad)
 
-        if self._island_state != "device_popup":
-            # 4. Top Glass Sheen
-            sheen_h = min(h * 0.45, 16.0)
-            sheen_grad = QLinearGradient(0, 0, 0, sheen_h)
-            sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 26))
-            sheen_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-            painter.fillRect(QRectF(0, 0, w, sheen_h), sheen_grad)
+        # 4. Top Glass Sheen
+        sheen_h = min(h * 0.45, 16.0)
+        sheen_grad = QLinearGradient(0, 0, 0, sheen_h)
+        sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 26))
+        sheen_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.fillRect(QRectF(0, 0, w, sheen_h), sheen_grad)
 
-            # 5. Animated Moving Gradient Effect
-            self._paint_moving_gradient(painter, w, h)
+        # 5. Animated Moving Gradient Effect
+        self._paint_moving_gradient(painter, w, h)
 
         # 6. State-Specific Content
         if self._island_state == "compact":
@@ -1121,11 +1111,10 @@ class DynamicIslandWidget(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(notch_path)
 
-        if self._island_state != "device_popup":
-            # 8. Subtle Milled Edge Inner Highlight
-            highlight_alpha = 24 if self._hovered else 14
-            painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
-            painter.drawPath(notch_path)
+        # 8. Subtle Milled Edge Inner Highlight
+        highlight_alpha = 24 if self._hovered else 14
+        painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
+        painter.drawPath(notch_path)
 
     def _paint_moving_gradient(self, painter: QPainter, w: float, h: float):
         t = self._gradient_shift
@@ -1318,71 +1307,117 @@ class DynamicIslandWidget(QWidget):
         painter.drawText(body_rect, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, elided)
 
     def _paint_device_popup_notch(self, painter: QPainter, w: float, h: float):
-        """Draws the Apple iOS Accessory Connection Card directly inside the Dynamic Island notch."""
+        """
+        Draws the sleek dark glassy Dynamic Island accessory notification.
+        Matches the expanded music island aesthetic with real-time audio waveform.
+        """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
         cat = self._device_info.get("category", "airpods")
         title = self._device_info.get("display_title") or self._device_info.get("name") or "Audio Device"
-        subtitle = self._device_info.get("display_subtitle") or "Connected to Windows"
+        subtitle = self._device_info.get("display_subtitle") or "Connected  •  Audio Output Ready"
 
-        # 1. Close Button ('✕') in Top-Right
-        close_rect = QRectF(w - 46, 20, 24, 24)
-        c_center = close_rect.center()
-        is_close_hovered = self._device_close_hovered
+        r_top = NOTCH_RADIUS_TOP
 
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(230, 230, 235) if is_close_hovered else QColor(242, 242, 247)))
-        painter.drawEllipse(close_rect)
+        # ── 1. Top Bar: Clock & Battery ──────────────────────────────
+        time_font = get_display_font(11)
+        painter.setFont(time_font)
+        painter.setPen(COLOR_TEXT_PRIMARY)
+        painter.drawText(QRectF(r_top + 10.0, 4.0, 90.0, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._time_str)
 
-        painter.setPen(QPen(QColor(60, 60, 67, 220) if is_close_hovered else QColor(142, 142, 147), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        r = 4.5
-        painter.drawLine(QPointF(c_center.x() - r, c_center.y() - r), QPointF(c_center.x() + r, c_center.y() + r))
-        painter.drawLine(QPointF(c_center.x() + r, c_center.y() - r), QPointF(c_center.x() - r, c_center.y() + r))
+        batt_font = get_microlabel_font()
+        painter.setFont(batt_font)
+        painter.setPen(QColor("#38EF7D"))
+        pct = self._battery_info.get("percent", 100)
+        plugged = self._battery_info.get("is_plugged", False)
+        icon = "⚡" if plugged else "🔋"
+        painter.drawText(QRectF(w - r_top - 100.0, 4.0, 90.0, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{icon} {pct}%")
 
-        # 2. Header Titles (Apple SF / Segoe UI Typography)
-        title_font = QFont("Segoe UI", 16)
-        title_font.setBold(True)
-        title_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
-        painter.setFont(title_font)
-        painter.setPen(QPen(QColor(29, 29, 31)))
+        # ── 2. Inner Glass Card ──────────────────────────────────────
+        card_x = 16.0
+        card_y = 24.0
+        card_w = w - 32.0
+        card_h = h - 32.0
+        card_rect = QRectF(card_x, card_y, card_w, card_h)
 
-        title_rect = QRectF(32, 18, w - 78, 28)
-        fm = painter.fontMetrics()
-        elided_title = fm.elidedText(title, Qt.TextElideMode.ElideRight, int(w - 82))
-        painter.drawText(title_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, elided_title)
+        painter.setPen(QPen(QColor(255, 255, 255, 24), 1.0))
+        painter.setBrush(QBrush(QColor(14, 14, 20, 175)))
+        painter.drawRoundedRect(card_rect, 16.0, 16.0)
 
-        sub_font = QFont("Segoe UI", 10)
-        sub_font.setWeight(QFont.Weight.Medium)
-        sub_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
-        painter.setFont(sub_font)
-        painter.setPen(QPen(QColor(134, 134, 139)))
-        sub_rect = QRectF(24, 46, w - 48, 18)
-        painter.drawText(sub_rect, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, subtitle)
+        # ── 3. Device Art Thumbnail Box ──────────────────────────────
+        art_box_x = card_x + 9.0
+        art_box_y = card_y + 9.0
+        art_box_size = 64.0
+        art_box_rect = QRectF(art_box_x, art_box_y, art_box_size, art_box_size)
 
-        # 3. Center 3D Device Art
+        painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 14)))
+        painter.drawRoundedRect(art_box_rect, 13.0, 13.0)
+
         pix = self._device_pixmaps.get(cat)
-        art_size = 175.0
-        art_x = (w - art_size) / 2.0
-        art_y = 68.0
-        art_rect = QRectF(art_x, art_y, art_size, art_size)
-
         if pix and not pix.isNull():
-            painter.drawPixmap(art_rect.toRect(), pix)
+            target_s = int(art_box_size - 12.0)
+            smooth_pix = pix.scaled(
+                target_s, target_s,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            ix = art_box_x + (art_box_size - smooth_pix.width()) / 2.0
+            iy = art_box_y + (art_box_size - smooth_pix.height()) / 2.0
+            painter.drawPixmap(int(ix), int(iy), smooth_pix)
 
-        # 4. Action Button ("Done" / Apple Blue Pill)
-        done_rect = QRectF(28, h - 56, w - 56, 38)
-        is_done_hovered = self._device_done_hovered
+        # ── 4. Device Titles ─────────────────────────────────────────
+        text_x = art_box_x + art_box_size + 14.0
+        btn_w = 68.0
+        text_w = card_w - art_box_size - btn_w - 36.0
 
-        painter.setPen(Qt.PenStyle.NoPen)
-        btn_bg = QColor(20, 130, 245) if is_done_hovered else QColor(0, 113, 227)
-        painter.setBrush(QBrush(btn_bg))
-        painter.drawRoundedRect(done_rect, 19.0, 19.0)
+        title_font = get_display_font(13)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.setPen(QColor("#FFFFFF"))
+        fm_t = painter.fontMetrics()
+        elided_title = fm_t.elidedText(title, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, card_y + 11.0, text_w, 20.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_title)
 
-        btn_font = QFont("Segoe UI", 12)
+        sub_font = get_subtext_font(10)
+        painter.setFont(sub_font)
+        painter.setPen(QColor(255, 255, 255, 160))
+        fm_s = painter.fontMetrics()
+        elided_sub = fm_s.elidedText(subtitle, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, card_y + 32.0, text_w, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_sub)
+
+        # ── 5. Dynamic Live Waveform Bars ────────────────────────────
+        wave_x = text_x
+        wave_y = card_y + 53.0
+        phase = getattr(self, "_mini_eq_phase", 0.0)
+        for idx in range(10):
+            bar_h = 4.0 + 13.0 * (math.sin(phase * 1.5 + idx * 0.65) ** 2)
+            bx = wave_x + idx * 4.5
+            by = wave_y + (17.0 - bar_h) / 2.0
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor("#FFD600")))
+            painter.drawRoundedRect(QRectF(bx, by, 2.5, bar_h), 1.2, 1.2)
+
+        status_font = get_microlabel_font()
+        painter.setFont(status_font)
+        painter.setPen(QColor("#38EF7D"))
+        painter.drawText(QRectF(wave_x + 10 * 4.5 + 8.0, card_y + 51.0, 75.0, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "CONNECTED")
+
+        # ── 6. Frosted Glass "Done" Button ───────────────────────────
+        btn_h = 32.0
+        btn_x = card_x + card_w - btn_w - 12.0
+        btn_y = card_y + (card_h - btn_h) / 2.0
+        self._device_done_rect = QRectF(btn_x, btn_y, btn_w, btn_h)
+
+        is_hovered = getattr(self, "_device_done_hovered", False)
+        painter.setPen(QPen(QColor(255, 255, 255, 60 if is_hovered else 36), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 48 if is_hovered else 24)))
+        painter.drawRoundedRect(self._device_done_rect, 16.0, 16.0)
+
+        btn_font = get_display_font(11)
         btn_font.setBold(True)
-        btn_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.PreferQuality)
         painter.setFont(btn_font)
-        painter.setPen(QPen(QColor(255, 255, 255)))
-        painter.drawText(done_rect, Qt.AlignmentFlag.AlignCenter, "Done")
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(self._device_done_rect, Qt.AlignmentFlag.AlignCenter, "Done")
