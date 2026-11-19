@@ -681,7 +681,7 @@ class DynamicIslandWidget(QWidget):
                 rgba.width,
                 rgba.height,
                 QImage.Format.Format_RGBA8888
-            )
+            ).copy()
             self._glass_bg_pixmap = QPixmap.fromImage(qimg)
             self.update()
         except Exception:
@@ -1058,6 +1058,7 @@ class DynamicIslandWidget(QWidget):
 
         w = float(self.width())
         h = float(self.height())
+        has_media = bool(self._media_info.get("has_media", False))
 
         notch_path = self._create_notch_path(w, h)
 
