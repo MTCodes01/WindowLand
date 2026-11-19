@@ -1,0 +1,9 @@
+PyQt6>=6.5.0
+winrt-Windows.Media.Control>=4.0.0; python_version >= '3.13'
+winrt-Windows.UI.Notifications>=4.0.0; python_version >= '3.13'
+winrt-Windows.UI.Notifications.Management>=4.0.0; python_version >= '3.13'
+winrt-Windows.ApplicationModel>=4.0.0; python_version >= '3.13'
+winsdk>=1.0.0b10; python_version < '3.13'
+pycaw>=20240000
+comtypes>=1.4.0
+Pillow>=10.0.0

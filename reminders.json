@@ -1,0 +1,23 @@
+[
+  {
+    "id": "rem-1",
+    "text": "Review project roadmap & architecture",
+    "completed": false,
+    "created_at": 1795066268.7820919,
+    "due_time": null
+  },
+  {
+    "id": "rem-2",
+    "text": "Daily standup & team sync",
+    "completed": true,
+    "created_at": 1795062668.7820928,
+    "due_time": null
+  },
+  {
+    "id": "rem-3",
+    "text": "Hydrate & stretch break",
+    "completed": false,
+    "created_at": 1795066268.7820945,
+    "due_time": 1795066868.7820945
+  }
+]
