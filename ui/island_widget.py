@@ -1187,10 +1187,10 @@ class DynamicIslandWidget(QWidget):
     # Organic Curvy Hardware Notch Path Generator
     # -------------------------------------------------------------
     def _create_notch_path(self, w: float, h: float) -> QPainterPath:
-        morph = getattr(self, "_dock_morph", 1.0)
+        morph = max(0.0, min(1.0, getattr(self, "_dock_morph", 1.0)))
         edge = getattr(self, "_dock_edge", "top")
+        r_cap = min(h / 2.0, 22.0)
 
-        r_ear = NOTCH_RADIUS_TOP * max(0.0, min(1.0, morph))
         if self._island_state == "compact":
             r_bot = NOTCH_RADIUS_BOT
         elif self._island_state == "device_popup":
@@ -1201,6 +1201,7 @@ class DynamicIslandWidget(QWidget):
         path = QPainterPath()
 
         if edge == "top":
+            r_ear = NOTCH_RADIUS_TOP * morph
             if r_ear > 0.5:
                 path.moveTo(0, 0)
                 path.cubicTo(r_ear * 0.4, 0, r_ear, r_ear * 0.4, r_ear, r_ear)
@@ -1212,10 +1213,10 @@ class DynamicIslandWidget(QWidget):
                 path.cubicTo(w - r_ear, r_ear * 0.4, w - r_ear * 0.4, 0, w, 0)
                 path.lineTo(0, 0)
             else:
-                r = min(h / 2.0, 22.0)
-                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+                path.addRoundedRect(QRectF(0, 0, w, h), r_cap, r_cap)
 
         elif edge == "bottom":
+            r_ear = NOTCH_RADIUS_TOP * morph
             if r_ear > 0.5:
                 path.moveTo(0, h)
                 path.cubicTo(r_ear * 0.4, h, r_ear, h - r_ear * 0.4, r_ear, h - r_ear)
@@ -1227,42 +1228,50 @@ class DynamicIslandWidget(QWidget):
                 path.cubicTo(w - r_ear, h - r_ear * 0.4, w - r_ear * 0.4, h, w, h)
                 path.lineTo(0, h)
             else:
-                r = min(h / 2.0, 22.0)
-                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+                path.addRoundedRect(QRectF(0, 0, w, h), r_cap, r_cap)
 
         elif edge == "left":
-            if r_ear > 0.5:
-                path.moveTo(0, 0)
-                path.cubicTo(0, r_ear * 0.4, r_ear * 0.4, r_ear, r_ear, r_ear)
-                path.lineTo(w - r_bot, r_ear)
-                path.quadTo(w, r_ear, w, r_ear + r_bot)
-                path.lineTo(w, h - r_ear - r_bot)
-                path.quadTo(w, h - r_ear, w - r_bot, h - r_ear)
-                path.lineTo(r_ear, h - r_ear)
-                path.cubicTo(r_ear * 0.4, h - r_ear, 0, h - r_ear * 0.4, 0, h)
-                path.lineTo(0, 0)
+            # Docks cleanly against left screen border; right side is a smooth capsule tab
+            r_dock = r_cap * (1.0 - morph)
+            r_free = r_cap
+            path.moveTo(0, r_dock)
+            if r_dock > 0.5:
+                path.quadTo(0, 0, r_dock, 0)
             else:
-                r = min(h / 2.0, 22.0)
-                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+                path.lineTo(0, 0)
+            path.lineTo(w - r_free, 0)
+            path.quadTo(w, 0, w, r_free)
+            path.lineTo(w, h - r_free)
+            path.quadTo(w, h, w - r_free, h)
+            if r_dock > 0.5:
+                path.lineTo(r_dock, h)
+                path.quadTo(0, h, 0, h - r_dock)
+            else:
+                path.lineTo(0, h)
+            path.lineTo(0, r_dock)
 
         elif edge == "right":
-            if r_ear > 0.5:
-                path.moveTo(w, 0)
-                path.cubicTo(w, r_ear * 0.4, w - r_ear * 0.4, r_ear, w - r_ear, r_ear)
-                path.lineTo(r_bot, r_ear)
-                path.quadTo(0, r_ear, 0, r_ear + r_bot)
-                path.lineTo(0, h - r_ear - r_bot)
-                path.quadTo(0, h - r_ear, r_bot, h - r_ear)
-                path.lineTo(w - r_ear, h - r_ear)
-                path.cubicTo(w - r_ear * 0.4, h - r_ear, w, h - r_ear * 0.4, w, h)
-                path.lineTo(w, 0)
+            # Docks cleanly against right screen border; left side is a smooth capsule tab
+            r_dock = r_cap * (1.0 - morph)
+            r_free = r_cap
+            path.moveTo(w, r_dock)
+            if r_dock > 0.5:
+                path.quadTo(w, 0, w - r_dock, 0)
             else:
-                r = min(h / 2.0, 22.0)
-                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+                path.lineTo(w, 0)
+            path.lineTo(r_free, 0)
+            path.quadTo(0, 0, 0, r_free)
+            path.lineTo(0, h - r_free)
+            path.quadTo(0, h, r_free, h)
+            if r_dock > 0.5:
+                path.lineTo(w - r_dock, h)
+                path.quadTo(w, h, w, h - r_dock)
+            else:
+                path.lineTo(w, h)
+            path.lineTo(w, r_dock)
 
         else:  # "floating" pure liquid capsule
-            r = min(h / 2.0, 22.0)
-            path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+            path.addRoundedRect(QRectF(0, 0, w, h), r_cap, r_cap)
 
         path.closeSubpath()
         return path
@@ -1415,10 +1424,22 @@ class DynamicIslandWidget(QWidget):
         Renders the compact curvy notch with smooth subpixel text.
         """
         is_playing = self._media_info.get("is_playing", False)
-        r_top = NOTCH_RADIUS_TOP
+        edge = getattr(self, "_dock_edge", "top")
+        morph = getattr(self, "_dock_morph", 1.0)
 
-        content_left = r_top + 12.0
-        content_right = w - r_top - 12.0
+        if edge in ("top", "bottom"):
+            r_top = NOTCH_RADIUS_TOP * morph
+            content_left = r_top + 12.0
+            content_right = w - r_top - 12.0
+        elif edge == "left":
+            content_left = 12.0
+            content_right = w - 18.0
+        elif edge == "right":
+            content_left = 18.0
+            content_right = w - 12.0
+        else:  # floating
+            content_left = 14.0
+            content_right = w - 14.0
 
         # ── Left: Time ───────────────────────────────────────────
         time_parts = self._time_str.split(" ")
