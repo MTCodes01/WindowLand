@@ -366,6 +366,46 @@ def main():
     group_dock.addAction(act_dock_bottom)
     menu_dock.addAction(act_dock_bottom)
 
+    act_dock_left = QAction("Left Screen Edge", menu_dock)
+    act_dock_left.setCheckable(True)
+    act_dock_left.triggered.connect(lambda: set_dock("left"))
+    group_dock.addAction(act_dock_left)
+    menu_dock.addAction(act_dock_left)
+
+    act_dock_right = QAction("Right Screen Edge", menu_dock)
+    act_dock_right.setCheckable(True)
+    act_dock_right.triggered.connect(lambda: set_dock("right"))
+    group_dock.addAction(act_dock_right)
+    menu_dock.addAction(act_dock_right)
+
+    menu_dock.addSeparator()
+
+    act_dock_tl = QAction("Top-Left Corner", menu_dock)
+    act_dock_tl.setCheckable(True)
+    act_dock_tl.triggered.connect(lambda: set_dock("top-left"))
+    group_dock.addAction(act_dock_tl)
+    menu_dock.addAction(act_dock_tl)
+
+    act_dock_tr = QAction("Top-Right Corner", menu_dock)
+    act_dock_tr.setCheckable(True)
+    act_dock_tr.triggered.connect(lambda: set_dock("top-right"))
+    group_dock.addAction(act_dock_tr)
+    menu_dock.addAction(act_dock_tr)
+
+    act_dock_bl = QAction("Bottom-Left Corner", menu_dock)
+    act_dock_bl.setCheckable(True)
+    act_dock_bl.triggered.connect(lambda: set_dock("bottom-left"))
+    group_dock.addAction(act_dock_bl)
+    menu_dock.addAction(act_dock_bl)
+
+    act_dock_br = QAction("Bottom-Right Corner", menu_dock)
+    act_dock_br.setCheckable(True)
+    act_dock_br.triggered.connect(lambda: set_dock("bottom-right"))
+    group_dock.addAction(act_dock_br)
+    menu_dock.addAction(act_dock_br)
+
+    menu_dock.addSeparator()
+
     act_dock_floating = QAction("Free Floating Anywhere", menu_dock)
     act_dock_floating.setCheckable(True)
     act_dock_floating.triggered.connect(lambda: set_dock("floating"))
@@ -425,6 +465,14 @@ def main():
 
     # ── 6. Diagnostics & Preview ─────────────────────────────────
     menu_sim = tray_menu.addMenu("Diagnostics & Preview")
+    act_test_snip = QAction("Simulate Screenshot Notification", menu_sim)
+    act_test_snip.triggered.connect(lambda: system_service.trigger_test_notification(
+        app="Snipping Tool",
+        title="Screenshot copied to clipboard",
+        message="Automatically saved to screenshots folder."
+    ))
+    menu_sim.addAction(act_test_snip)
+
     act_test_toast = QAction("Simulate Calendar Notification", menu_sim)
     act_test_toast.triggered.connect(lambda: system_service.trigger_test_notification(
         app="Calendar",
