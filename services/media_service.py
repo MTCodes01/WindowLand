@@ -13,6 +13,7 @@ import asyncio
 import threading
 import queue
 import time
+import datetime
 from typing import Optional, Dict, Any
 from PyQt6.QtCore import QObject, pyqtSignal
 
@@ -235,12 +236,23 @@ class MediaService(QObject):
             artist = getattr(props, "artist", "") if props else ""
             album = getattr(props, "album_title", "") if props else ""
 
-            pos_sec = 0
-            dur_sec = 0
+            pos_sec = 0.0
+            dur_sec = 0.0
             try:
                 if timeline:
-                    pos_sec = int(timeline.position.total_seconds())
-                    dur_sec = int(timeline.end_time.total_seconds())
+                    raw_pos = timeline.position.total_seconds() if timeline.position else 0.0
+                    raw_dur = timeline.end_time.total_seconds() if timeline.end_time else 0.0
+                    dur_sec = max(0.0, raw_dur)
+                    if is_playing and hasattr(timeline, "last_updated_time") and timeline.last_updated_time:
+                        now_utc = datetime.datetime.now(datetime.timezone.utc)
+                        delta = (now_utc - timeline.last_updated_time).total_seconds()
+                        pos_sec = raw_pos + max(0.0, delta)
+                    else:
+                        pos_sec = raw_pos
+                    if dur_sec > 0:
+                        pos_sec = min(dur_sec, max(0.0, pos_sec))
+                    else:
+                        pos_sec = max(0.0, pos_sec)
             except Exception:
                 pass
 
@@ -269,12 +281,49 @@ class MediaService(QObject):
             elif os.path.exists(cache_file):
                 art_path = cache_file
 
+            # Video vs Music Classification
+            playback_type_int = 0
+            try:
+                if props and hasattr(props, "playback_type") and props.playback_type is not None:
+                    playback_type_int = int(props.playback_type)
+            except Exception:
+                pass
+
+            app_id = getattr(current_session, "source_app_user_model_id", "").lower()
+            browser_apps = ("chrome", "msedge", "edge", "firefox", "brave", "opera", "vivaldi")
+            is_browser = any(b in app_id for b in browser_apps)
+            video_apps = ("vlc", "mpc", "potplayer", "netflix", "prime", "disney", "hulu", "movies & tv", "video")
+            is_video_app = any(v in app_id for v in video_apps)
+            music_apps = ("spotify", "applemusic", "itunes", "tidal", "deezer", "amazon music", "foobar", "aimp", "music")
+            is_music_app = any(m in app_id for m in music_apps)
+
+            aspect_ratio = 1.0
+            if art_path and os.path.exists(art_path):
+                try:
+                    from PIL import Image
+                    with Image.open(art_path) as im:
+                        if im.height > 0:
+                            aspect_ratio = im.width / float(im.height)
+                except Exception:
+                    pass
+
+            is_video = False
+            if playback_type_int == 2 or is_video_app:
+                is_video = True
+            elif is_music_app:
+                is_video = False
+            elif aspect_ratio >= 1.30:  # Standard 16:9 widescreen video thumbnail
+                is_video = True
+            elif is_browser:
+                is_video = (aspect_ratio >= 1.25)
+
             has_media = bool(title or artist or is_playing)
 
             state = {
                 "has_media": has_media,
                 "is_playing": is_playing,
-                "title": title or "Playing Audio",
+                "is_video": is_video,
+                "title": title or ("Playing Video" if is_video else "Playing Audio"),
                 "artist": artist or "",
                 "album": album or "",
                 "is_mock": False,
@@ -381,6 +430,7 @@ class MediaService(QObject):
         state = {
             "has_media": True,
             "is_playing": self._mock_playing,
+            "is_video": False,
             "title": track["title"],
             "artist": track["artist"],
             "album": track["album"],
@@ -395,6 +445,7 @@ class MediaService(QObject):
         if (state.get("title") != self._last_state.get("title") or
             state.get("artist") != self._last_state.get("artist") or
             state.get("is_playing") != self._last_state.get("is_playing") or
+            state.get("is_video") != self._last_state.get("is_video") or
             state.get("album_art_path") != self._last_state.get("album_art_path") or
             state.get("has_media") != self._last_state.get("has_media")):
             self._last_state = dict(state)

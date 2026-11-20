@@ -7,82 +7,83 @@ Soft organic curvature with zero unwanted text clutter.
 from PyQt6.QtGui import QColor, QFont
 
 # Geometry Constants for Compact Curvy Top Notch
-COMPACT_IDLE_WIDTH = 190
-COMPACT_MUSIC_WIDTH = 320
-COMPACT_HEIGHT = 32
+COMPACT_IDLE_WIDTH = 180
+COMPACT_MUSIC_WIDTH = 280
+COMPACT_HEIGHT = 30
 
-TOAST_WIDTH = 420
-TOAST_HEIGHT = 68
+TOAST_WIDTH = 400
+TOAST_HEIGHT = 64
 
-EXPANDED_WIDTH = 420
-EXPANDED_HEIGHT = 224
+EXPANDED_WIDTH = 440
+EXPANDED_HEIGHT = 194
 
 # Section 3 New UI States & Geometry Matrix
 OSD_HUD_WIDTH = 220
-OSD_HUD_HEIGHT = 36
-OSD_HUD_R_TOP = 18.0
-OSD_HUD_R_BOT = 18.0
+OSD_HUD_HEIGHT = 34
+OSD_HUD_R_TOP = 17.0
+OSD_HUD_R_BOT = 17.0
 
-CALL_LIVE_WIDTH = 420
-CALL_LIVE_HEIGHT = 74
+CALL_LIVE_WIDTH = 400
+CALL_LIVE_HEIGHT = 68
 CALL_LIVE_R_TOP = 18.0
-CALL_LIVE_R_BOT = 24.0
+CALL_LIVE_R_BOT = 22.0
 
-OTP_PILL_WIDTH = 360
-OTP_PILL_HEIGHT = 54
+OTP_PILL_WIDTH = 340
+OTP_PILL_HEIGHT = 50
 OTP_PILL_R_TOP = 18.0
-OTP_PILL_R_BOT = 20.0
+OTP_PILL_R_BOT = 18.0
 
-FILE_SHELF_WIDTH = 460
-FILE_SHELF_HEIGHT = 126
+FILE_SHELF_WIDTH = 440
+FILE_SHELF_HEIGHT = 116
 FILE_SHELF_R_TOP = 18.0
-FILE_SHELF_R_BOT = 26.0
+FILE_SHELF_R_BOT = 24.0
 
 DEVICE_POPUP_WIDTH = 370
 DEVICE_POPUP_HEIGHT = 360
 
 NOTCH_RADIUS_TOP = 14.0   # Curvy flaring inverse fillets at top bezel
-NOTCH_RADIUS_BOT = 22.0   # Curvy soft bottom corners
+NOTCH_RADIUS_BOT = 20.0   # Curvy soft bottom corners
 EXPANDED_RADIUS = 28.0    # Curvy bottom corners in expanded mode
 
-# Base Theme Colors
-COLOR_BEZEL = QColor("#0A0A0E")
+# Base Theme Colors (Apple-Grade Deep Obsidian)
+COLOR_BEZEL = QColor("#000000")
 COLOR_CANVAS = QColor("#08080C")
 COLOR_TEXT_PRIMARY = QColor("#FFFFFF")
-COLOR_TEXT_SECONDARY = QColor("#A0A0AB")
-COLOR_TEXT_MUTED = QColor("#666672")
-COLOR_ACCENT_YELLOW = QColor("#FFD600")
+COLOR_TEXT_SECONDARY = QColor("#8E8E93")
+COLOR_TEXT_MUTED = QColor("#636366")
+COLOR_ACCENT = QColor("#FFFFFF")
+COLOR_ACCENT_YELLOW = QColor("#FFFFFF")
 
-# Dynamic Glow Palettes
+# Dynamic Glow Palettes (Subtle, Restrained Tints)
 GLOW_STATES = {
     "idle": {
-        "color1": QColor(255, 179, 71),
-        "color2": QColor(255, 204, 51),
-        "opacity": 0.22,
-        "name": "Amber"
+        "color1": QColor(255, 255, 255),
+        "color2": QColor(200, 200, 210),
+        "opacity": 0.06,
+        "name": "Subtle White"
     },
     "music": {
-        "color1": QColor(255, 214, 0),
-        "color2": QColor(255, 107, 0),
-        "opacity": 0.32,
-        "name": "Amber Gold"
+        "color1": QColor(255, 255, 255),
+        "color2": QColor(220, 220, 230),
+        "opacity": 0.08,
+        "name": "Soft Glass"
     },
     "notification": {
         "color1": QColor(86, 204, 242),
         "color2": QColor(47, 128, 237),
-        "opacity": 0.35,
+        "opacity": 0.12,
         "name": "Cyan"
     },
     "reminders": {
         "color1": QColor(142, 45, 226),
         "color2": QColor(74, 0, 224),
-        "opacity": 0.35,
+        "opacity": 0.10,
         "name": "Violet"
     },
     "success": {
-        "color1": QColor(17, 153, 142),
-        "color2": QColor(56, 239, 125),
-        "opacity": 0.35,
+        "color1": QColor(56, 239, 125),
+        "color2": QColor(17, 153, 142),
+        "opacity": 0.12,
         "name": "Emerald"
     }
 }

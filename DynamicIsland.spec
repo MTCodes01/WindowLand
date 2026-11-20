@@ -3,7 +3,7 @@
 
 a = Analysis(
     ['main.py'],
-    pathex=['c:/antigravity/Glassthme', '.'],
+    pathex=['.'],
     binaries=[],
     datas=[('assets', 'assets'), ('services', 'services'), ('ui', 'ui')],
     hiddenimports=[
@@ -21,6 +21,7 @@ a = Analysis(
         'ui.components.visualizer',
         'winrt.windows.foundation',
         'winrt.windows.foundation.collections',
+        'winrt.windows.media',
         'winrt.windows.media.control',
         'winrt.windows.storage.streams',
         'winrt.windows.ui.notifications',
