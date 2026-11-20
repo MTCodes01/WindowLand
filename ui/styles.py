@@ -7,9 +7,9 @@ Soft organic curvature with zero unwanted text clutter.
 from PyQt6.QtGui import QColor, QFont
 
 # Geometry Constants for Compact Curvy Top Notch
-COMPACT_IDLE_WIDTH = 200
+COMPACT_IDLE_WIDTH = 190
 COMPACT_MUSIC_WIDTH = 320
-COMPACT_HEIGHT = 34
+COMPACT_HEIGHT = 32
 
 TOAST_WIDTH = 420
 TOAST_HEIGHT = 68

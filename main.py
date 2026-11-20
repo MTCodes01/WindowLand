@@ -31,7 +31,14 @@ _mutex_handle = _kernel32.CreateMutexW(None, True, MUTEX_NAME)
 ERROR_ALREADY_EXISTS = 183
 if _kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
     # Another instance is already running!
-    # Wake up the running instance and reveal the Dynamic Island!
+    # 1. Wake up running instance via local phone bridge HTTP endpoint (<10ms)
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:54321/api/wake", data=b"{}", headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=1.0)
+    except Exception:
+        pass
+    # 2. Also broadcast native Windows message
     HWND_BROADCAST = 0xFFFF
     _user32.PostMessageW(HWND_BROADCAST, WM_SHOW_DYNAMIC_ISLAND, 0, 0)
     sys.exit(0)
@@ -84,7 +91,10 @@ from services.media_service import MediaService
 from services.system_service import SystemService
 from services.device_listener import DeviceService
 from services.autostart_service import is_autostart_enabled, set_autostart
+from services.phone_bridge import PhoneBridgeService
 from ui.island_widget import DynamicIslandWidget
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QUrl
 
 
 def resource_path(relative_path: str) -> str:
@@ -140,22 +150,30 @@ def main():
     media_service = MediaService()
     system_service = SystemService()
     device_service = DeviceService()
+    phone_service = PhoneBridgeService(port=54321)
 
     island = DynamicIslandWidget(media_service, system_service, device_service)
-    # Always present on launch: smoothly drop down from top screen bezel
+    # Always present on launch: smoothly sit flush at top screen bezel in compact mode
     island.show()
     island.raise_()
     island.set_island_state("compact")
     island.set_glow_state("notification", duration_sec=3.5)
 
-    # If no music is actively playing, smoothly retract back to bezel after 4 seconds
-    if not island._is_music_active():
-        island._music_idle_timer.setInterval(4000)
-        island._music_idle_timer.start()
-
     media_service.start()
     system_service.start()
     device_service.start()
+
+    # Wire phone notifications and remote wakeups to Dynamic Island
+    phone_service.notification_received.connect(
+        lambda data: island.trigger_toast(data["app"], data["title"], data["message"])
+    )
+    phone_service.wake_requested.connect(
+        lambda: (island.show(), island.raise_(), island.set_glow_state("notification", duration_sec=3.0), island.set_island_state("expanded"))
+    )
+    phone_service.device_paired.connect(
+        lambda d: island.set_glow_state("success", duration_sec=3.0)
+    )
+    phone_service.start()
 
     # ── System Tray ──────────────────────────────────────────────
     tray_icon = QSystemTrayIcon(create_tray_icon(), app)
@@ -203,6 +221,10 @@ def main():
     tray_menu.addAction(act_header)
     tray_menu.addSeparator()
 
+    act_phone = QAction(f"📱  Connect Phone (http://{phone_service.local_ip}:{phone_service.port})", tray_menu)
+    act_phone.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(phone_service.pairing_url)))
+    tray_menu.addAction(act_phone)
+
     act_toggle = QAction("⤢  Expand / Collapse  (Alt+Space)", tray_menu)
     act_toggle.triggered.connect(island.toggle_expanded)
     tray_menu.addAction(act_toggle)
@@ -245,6 +267,12 @@ def main():
     ))
     menu_sim.addAction(act_test_toast)
 
+    act_sim_phone = QAction("📱 Test Phone Notification (WhatsApp)", menu_sim)
+    act_sim_phone.triggered.connect(lambda: island.trigger_toast(
+        "📱 WHATSAPP", "Sarah Jenkins (iPhone)", "Hey! Are you joining the design sync now?"
+    ))
+    menu_sim.addAction(act_sim_phone)
+
     act_test_mock = QAction("🎵 Demo Track (Toggle)", menu_sim)
     act_test_mock.triggered.connect(media_service.toggle_mock_mode)
     menu_sim.addAction(act_test_mock)
@@ -273,6 +301,7 @@ def main():
         media_service.stop()
         system_service.stop()
         device_service.stop()
+        phone_service.stop()
         app.quit()
     act_quit.triggered.connect(on_quit)
     tray_menu.addAction(act_quit)
@@ -294,6 +323,7 @@ def main():
     app.aboutToQuit.connect(media_service.stop)
     app.aboutToQuit.connect(system_service.stop)
     app.aboutToQuit.connect(device_service.stop)
+    app.aboutToQuit.connect(phone_service.stop)
 
     sys.exit(app.exec())
 

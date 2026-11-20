@@ -368,9 +368,10 @@ class DynamicIslandWidget(QWidget):
             if primary:
                 primary.geometryChanged.connect(self._on_screens_changed)
 
-        # Auto-hide if no music actively playing at launch
-        if not self._is_music_active():
-            self.hide()
+        # Always visible at launch in compact mode
+        self.show()
+        self.raise_()
+        self._apply_geometry_for_state("compact", animate=False)
 
     def _load_device_pixmaps(self):
         """Preloads device artwork for instant display."""
@@ -394,9 +395,9 @@ class DynamicIslandWidget(QWidget):
 
     def _on_music_idle_timeout(self):
         """Called when music has been stopped/paused after grace duration."""
-        if not self._is_music_active() and self._island_state not in ("toast", "expanded"):
-            if self.isVisible():
-                self.hide()
+        if not self._is_music_active() and self._island_state not in ("toast", "expanded", "device_popup"):
+            self._apply_geometry_for_state("compact", animate=True)
+            self.update()
 
     def _on_screens_changed(self, *args):
         """Auto-recenter when monitor resolution changes or displays are plugged/unplugged."""
@@ -443,7 +444,10 @@ class DynamicIslandWidget(QWidget):
         screen_geo = screen.geometry() if screen else QRectF(0, 0, 1920, 1080)
 
         if state == "compact":
-            w = COMPACT_MUSIC_WIDTH
+            if self._is_music_active() or self._media_info.get("has_media", False):
+                w = COMPACT_MUSIC_WIDTH
+            else:
+                w = COMPACT_IDLE_WIDTH
             h = COMPACT_HEIGHT
         elif state == "toast":
             w = TOAST_WIDTH
@@ -539,9 +543,6 @@ class DynamicIslandWidget(QWidget):
     def _on_hover_collapse_triggered(self):
         if not self._hovered and self._island_state == "expanded":
             self.set_island_state("compact")
-            # If no music is actively playing, completely hide!
-            if not self._is_music_active():
-                self.hide()
 
     # -------------------------------------------------------------
     # State Management & Auto-Hide
@@ -571,8 +572,6 @@ class DynamicIslandWidget(QWidget):
             return
         if self._island_state == "expanded":
             self.set_island_state("compact")
-            if not self._is_music_active():
-                self.hide()
         else:
             if not self.isVisible():
                 self.show()
@@ -584,8 +583,6 @@ class DynamicIslandWidget(QWidget):
         self._device_dismiss_timer.stop()
         if self._island_state != "compact":
             self.set_island_state("compact")
-        if not self._is_music_active():
-            self.hide()
 
     def trigger_toast(self, app: str, title: str, message: str):
         """
@@ -605,14 +602,11 @@ class DynamicIslandWidget(QWidget):
             self.show()
             self.raise_()
         self.set_island_state("toast")
-        self._toast_dismiss_timer.start(4000)
+        self._toast_dismiss_timer.start(4500)
 
     def _on_toast_timeout(self):
         if self._island_state == "toast":
-            self.set_island_state("compact")
-            # If there is no music actively playing, re-hide completely!
-            if not self._is_music_active():
-                self.hide()
+            self.collapse_to_compact()
 
     def set_glow_state(self, glow_name: str, duration_sec: Optional[float] = None):
         if glow_name not in GLOW_STATES:
@@ -1211,6 +1205,23 @@ class DynamicIslandWidget(QWidget):
         sep_x = content_left + tw + ampm_w + 10.0
         painter.setPen(QPen(QColor(255, 255, 255, 24), 1.0))
         painter.drawLine(QPointF(sep_x, 7.0), QPointF(sep_x, h - 7.0))
+
+        has_media = bool(self._media_info.get("has_media", False))
+        if not has_media:
+            # ── Idle Mode: Battery & Status Indicator ────────────
+            pct = self._battery_info.get("percent", 100)
+            plugged = self._battery_info.get("is_plugged", False)
+            icon = "⚡" if plugged else "🔋"
+            batt_text = f"{icon} {pct}%"
+
+            batt_font = get_microlabel_font()
+            painter.setFont(batt_font)
+            painter.setPen(QColor("#38EF7D"))
+            fm_b = QFontMetrics(batt_font)
+            bw = fm_b.horizontalAdvance(batt_text)
+            batt_rect = QRectF(w - r_top - bw - 12.0, (h - fm_b.height()) / 2.0, bw + 2.0, fm_b.height())
+            painter.drawText(batt_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, batt_text)
+            return
 
         # ── Album Art Squircle (24×24) ───────────────────────────
         art_size = 24.0
