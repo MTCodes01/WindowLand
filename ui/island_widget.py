@@ -38,11 +38,16 @@ from ui.styles import (
     COMPACT_IDLE_WIDTH, COMPACT_MUSIC_WIDTH, COMPACT_HEIGHT,
     TOAST_WIDTH, TOAST_HEIGHT,
     EXPANDED_WIDTH, EXPANDED_HEIGHT,
+    OSD_HUD_WIDTH, OSD_HUD_HEIGHT, OSD_HUD_R_TOP, OSD_HUD_R_BOT,
+    CALL_LIVE_WIDTH, CALL_LIVE_HEIGHT, CALL_LIVE_R_TOP, CALL_LIVE_R_BOT,
+    OTP_PILL_WIDTH, OTP_PILL_HEIGHT, OTP_PILL_R_TOP, OTP_PILL_R_BOT,
+    FILE_SHELF_WIDTH, FILE_SHELF_HEIGHT, FILE_SHELF_R_TOP, FILE_SHELF_R_BOT,
+    DEVICE_POPUP_WIDTH, DEVICE_POPUP_HEIGHT,
     NOTCH_RADIUS_TOP, NOTCH_RADIUS_BOT, EXPANDED_RADIUS,
     COLOR_BEZEL, COLOR_CANVAS, COLOR_TEXT_PRIMARY,
     COLOR_TEXT_SECONDARY, COLOR_TEXT_MUTED, COLOR_ACCENT_YELLOW,
     GLOW_STATES, get_microlabel_font, get_display_font,
-    get_subtext_font, DASHBOARD_STYLESHEET
+    get_subtext_font, get_monospaced_font, DASHBOARD_STYLESHEET
 )
 from ui.components.visualizer import AudioVisualizerWidget
 from ui.device_popup import DeviceConnectionPopup
@@ -82,10 +87,16 @@ try:
 
     def is_fullscreen_app_active(self_hwnd=None) -> bool:
         """
-        Detects if the foreground window is running in full-screen mode
+        Detects if the foreground window is running in true exclusive full-screen mode
         (games, full-screen video in Chrome/Edge/Firefox/YouTube/VLC/Netflix).
         """
         try:
+            # 1. Direct3D / exclusive fullscreen game / presentation check (Windows Shell API)
+            qstate = ctypes.c_int()
+            if _shell32.SHQueryUserNotificationState(ctypes.byref(qstate)) == 0:
+                if qstate.value in (2, 3, 4):  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+                    return True
+
             hwnd = _user32.GetForegroundWindow()
             if not hwnd or (self_hwnd and hwnd == self_hwnd):
                 return False
@@ -110,17 +121,10 @@ try:
                 return False
 
             rc = mi.rcMonitor
-            # Check if window covers the entire monitor
+            # True fullscreen F11 / video covers entire physical monitor and obscures the taskbar
+            # Standard maximized windows leave the taskbar visible (rect.bottom <= mi.rcWork.bottom)
             if rect.left <= rc.left and rect.top <= rc.top and rect.right >= rc.right and rect.bottom >= rc.bottom:
-                style = _user32.GetWindowLongW(hwnd, -16)  # GWL_STYLE
-                WS_CAPTION = 0x00C00000
-                if (style & WS_CAPTION) != WS_CAPTION or (style & 0x80000000) or mi.rcWork.bottom < rc.bottom:
-                    return True
-
-            # Direct3D / exclusive fullscreen game check
-            qstate = ctypes.c_int()
-            if _shell32.SHQueryUserNotificationState(ctypes.byref(qstate)) == 0:
-                if qstate.value in (2, 3):  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN
+                if mi.rcWork.bottom < rc.bottom and rect.bottom >= rc.bottom:
                     return True
         except Exception:
             pass
@@ -128,6 +132,228 @@ try:
 except Exception:
     def is_fullscreen_app_active(self_hwnd=None) -> bool:
         return False
+
+
+def extract_album_swatches(image_path_or_pixmap) -> tuple[QColor, QColor]:
+    """
+    Extracts the vibrant accent color and secondary harmonizing swatch
+    from an album cover, enforcing an automatic luminance floor.
+    """
+    default_vibrant = QColor("#FFD600")
+    default_secondary = QColor("#FF8C00")
+
+    if not image_path_or_pixmap or not os.path.exists(str(image_path_or_pixmap)):
+        return default_vibrant, default_secondary
+
+    try:
+        from PIL import Image
+        import colorsys
+
+        img = Image.open(str(image_path_or_pixmap)).convert("RGB")
+        img = img.resize((32, 32), Image.Resampling.BOX)
+
+        pixels = list(img.getdata())
+        scored = []
+        for r, g, b in pixels:
+            rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+            h, s, v = colorsys.rgb_to_hsv(rf, gf, bf)
+            # Filter near-black, near-white, or washed-out grays
+            if v < 0.15 or s < 0.18:
+                continue
+            score = (s ** 1.3) * (v ** 0.8)
+            scored.append((score, h, s, v, r, g, b))
+
+        if not scored:
+            return default_vibrant, default_secondary
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        _, h1, s1, v1, r1, g1, b1 = scored[0]
+
+        # Automatic luminance floor: guarantee brightness >= 0.72 so dark covers stay vivid
+        v_floor = max(0.72, v1)
+        s_floor = max(0.65, min(1.0, s1 * 1.15))
+        rf, gf, bf = colorsys.hsv_to_rgb(h1, s_floor, v_floor)
+        c_vibrant = QColor(int(rf * 255), int(gf * 255), int(bf * 255))
+
+        # Secondary swatch: complementary or harmonic hue shift
+        h2 = (h1 + 0.12) % 1.0  # 43 degree hue shift for harmonic dual-vortex
+        rf2, gf2, bf2 = colorsys.hsv_to_rgb(h2, max(0.55, s1), max(0.55, v1 * 0.85))
+        c_secondary = QColor(int(rf2 * 255), int(gf2 * 255), int(bf2 * 255))
+
+        return c_vibrant, c_secondary
+    except Exception:
+        return default_vibrant, default_secondary
+
+
+class CoverArtWidget(QWidget):
+    """
+    Apple Music style album art squircle card with rounded clip (10px),
+    smooth bilinear pixmap transform, and 1px inner specular border.
+    """
+    def __init__(self, size=46, parent=None):
+        super().__init__(parent)
+        self.card_size = size
+        self.setFixedSize(size, size)
+        self._pixmap: Optional[QPixmap] = None
+
+    def set_pixmap(self, pixmap: Optional[QPixmap]):
+        self._pixmap = pixmap
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        w = float(self.width())
+        h = float(self.height())
+        rect = QRectF(0, 0, w, h)
+        radius = 10.0
+
+        # 1. Rounded squircle clip (10px)
+        path = QPainterPath()
+        path.addRoundedRect(rect, radius, radius)
+        painter.save()
+        painter.setClipPath(path)
+
+        if self._pixmap and not self._pixmap.isNull():
+            painter.drawPixmap(
+                rect.toRect(),
+                self._pixmap.scaled(
+                    int(w), int(h),
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+            )
+        else:
+            painter.fillRect(rect, QColor(25, 27, 38))
+
+        painter.restore()
+
+        # 2. Subtle 1px rgba(255, 255, 255, 0.14) inner specular border
+        painter.setPen(QPen(QColor(255, 255, 255, 36), 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+
+class TimelineScrubber(QWidget):
+    """
+    Interactive scrubbing timeline bar.
+    Hit-test area: 14px vertically.
+    Normal track: 3px thickness.
+    Hover track: 5px thickness with glowing 10px thumb circle tracking cursor.
+    Click & Drag to seek audio in real time.
+    """
+    seek_requested = pyqtSignal(float)  # Normalized position 0.0 to 1.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(14)
+        self.setMouseTracking(True)
+        self._progress = 0.0  # 0.0 to 1.0
+        self._hovered = False
+        self._scrubbing = False
+        self._scrub_progress = 0.0
+        self._accent_color = QColor("#FFD600")
+
+    def set_accent_color(self, col: QColor):
+        self._accent_color = QColor(col)
+        self.update()
+
+    def set_progress(self, progress: float):
+        if not self._scrubbing:
+            self._progress = max(0.0, min(1.0, progress))
+            self.update()
+
+    def enterEvent(self, event):
+        self._hovered = True
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._scrubbing:
+            self._hovered = False
+            self.unsetCursor()
+            self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._scrubbing = True
+            self._hovered = True
+            pos_x = event.position().x()
+            self._scrub_progress = max(0.0, min(1.0, pos_x / max(1.0, float(self.width()))))
+            self.update()
+            self.seek_requested.emit(self._scrub_progress)
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._hovered or self._scrubbing:
+            pos_x = event.position().x()
+            self._scrub_progress = max(0.0, min(1.0, pos_x / max(1.0, float(self.width()))))
+            if self._scrubbing:
+                self.seek_requested.emit(self._scrub_progress)
+            self.update()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._scrubbing:
+            self._scrubbing = False
+            self._progress = self._scrub_progress
+            self.seek_requested.emit(self._progress)
+            if not self.rect().contains(event.position().toPoint()):
+                self._hovered = False
+                self.unsetCursor()
+            self.update()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        w = float(self.width())
+        h = float(self.height())
+        cy = h / 2.0
+
+        is_active = self._hovered or self._scrubbing
+        track_h = 5.0 if is_active else 3.0
+        disp_progress = self._scrub_progress if is_active else self._progress
+
+        # Track background
+        track_rect = QRectF(0, cy - track_h / 2.0, w, track_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 30))
+        painter.drawRoundedRect(track_rect, track_h / 2.0, track_h / 2.0)
+
+        # Track filled (accent color)
+        fill_w = max(0.0, min(w, w * disp_progress))
+        if fill_w > 0:
+            fill_rect = QRectF(0, cy - track_h / 2.0, fill_w, track_h)
+            painter.setBrush(self._accent_color)
+            painter.drawRoundedRect(fill_rect, track_h / 2.0, track_h / 2.0)
+
+        # Glowing thumb circle (10px) on hover/scrub
+        if is_active:
+            thumb_x = fill_w
+            thumb_radius = 5.0
+
+            # Ambient glow halo
+            glow = QRadialGradient(QPointF(thumb_x, cy), 12.0)
+            glow_c = QColor(self._accent_color)
+            glow_c.setAlpha(90)
+            glow.setColorAt(0.0, glow_c)
+            glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+            painter.setBrush(QBrush(glow))
+            painter.drawEllipse(QRectF(thumb_x - 12.0, cy - 12.0, 24.0, 24.0))
+
+            # Solid thumb
+            painter.setBrush(self._accent_color)
+            painter.drawEllipse(QRectF(thumb_x - thumb_radius, cy - thumb_radius, thumb_radius * 2.0, thumb_radius * 2.0))
+
+            # Inner specular highlight dot
+            painter.setBrush(QColor("#FFFFFF"))
+            painter.drawEllipse(QRectF(thumb_x - 1.5, cy - 1.5, 3.0, 3.0))
 
 
 class VectorMediaButton(QPushButton):
@@ -139,11 +365,16 @@ class VectorMediaButton(QPushButton):
         super().__init__(parent)
         self.mode = mode
         self.is_primary = is_primary
+        self.accent_color = QColor("#FFD600")
         self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         if is_primary:
-            self.setFixedSize(58, 34)
+            self.setFixedSize(50, 30)
         else:
-            self.setFixedSize(42, 30)
+            self.setFixedSize(36, 26)
+
+    def set_accent_color(self, col: QColor):
+        self.accent_color = QColor(col)
+        self.update()
 
     def set_mode(self, mode: str):
         if self.mode != mode:
@@ -152,7 +383,7 @@ class VectorMediaButton(QPushButton):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         w = float(self.width())
         h = float(self.height())
@@ -167,15 +398,16 @@ class VectorMediaButton(QPushButton):
 
         if self.is_primary:
             grad = QLinearGradient(0, 0, 0, h)
+            c = self.accent_color
             if is_down:
-                grad.setColorAt(0.0, QColor("#E6C000"))
-                grad.setColorAt(1.0, QColor("#CC9C00"))
+                grad.setColorAt(0.0, c.darker(115))
+                grad.setColorAt(1.0, c.darker(130))
             elif is_hover:
-                grad.setColorAt(0.0, QColor("#FFE24D"))
-                grad.setColorAt(1.0, QColor("#FFBC1A"))
+                grad.setColorAt(0.0, c.lighter(115))
+                grad.setColorAt(1.0, c)
             else:
-                grad.setColorAt(0.0, QColor("#FFD600"))
-                grad.setColorAt(1.0, QColor("#FFAC00"))
+                grad.setColorAt(0.0, c.lighter(105))
+                grad.setColorAt(1.0, c.darker(110))
 
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(grad))
@@ -183,16 +415,16 @@ class VectorMediaButton(QPushButton):
 
             painter.setBrush(QColor("#0A0A0C"))
             if self.mode == "pause":
-                bar_w = 3.5
-                bar_h = 13.0
-                gap = 3.5
+                bar_w = 3.2
+                bar_h = 12.0
+                gap = 3.2
                 painter.drawRoundedRect(QRectF(cx - gap - bar_w / 2.0, cy - bar_h / 2.0, bar_w, bar_h), 1.2, 1.2)
                 painter.drawRoundedRect(QRectF(cx + gap - bar_w / 2.0, cy - bar_h / 2.0, bar_w, bar_h), 1.2, 1.2)
             else:
                 tri = QPainterPath()
-                tri.moveTo(cx - 4.5, cy - 6.5)
-                tri.lineTo(cx + 6.5, cy)
-                tri.lineTo(cx - 4.5, cy + 6.5)
+                tri.moveTo(cx - 4.5, cy - 6.0)
+                tri.lineTo(cx + 6.0, cy)
+                tri.lineTo(cx - 4.5, cy + 6.0)
                 tri.closeSubpath()
                 painter.drawPath(tri)
         else:
@@ -324,6 +556,42 @@ class DynamicIslandWidget(QWidget):
         self._toast_dismiss_timer.setSingleShot(True)
         self._toast_dismiss_timer.timeout.connect(self._on_toast_timeout)
 
+        # New UI States Data Caches & Timers (OSD, Live Call, 2FA OTP, File Shelf)
+        self._osd_info: Dict[str, Any] = {"glyph": "🔊", "value": 0.5, "label": "50%", "type": "volume"}
+        self._osd_dismiss_timer = QTimer(self)
+        self._osd_dismiss_timer.setSingleShot(True)
+        self._osd_dismiss_timer.timeout.connect(self._on_osd_timeout)
+
+        self._call_info: Dict[str, Any] = {"name": "Mom", "status": "iPhone • Incoming Call", "avatar": "👤"}
+        self._call_pulse = 0.0
+
+        self._otp_info: Dict[str, Any] = {"code": "482 910", "app": "Messages", "copied": False}
+        self._otp_dismiss_timer = QTimer(self)
+        self._otp_dismiss_timer.setSingleShot(True)
+        self._otp_dismiss_timer.timeout.connect(self._on_otp_timeout)
+
+        self._shelf_files: list[Dict[str, Any]] = []
+        self._shelf_hover_clear = False
+
+        # 3D Accessory Connection Sheet Enhancements
+        self._device_route = "device"  # "device" (e.g. AirPods) ↔ "speakers"
+        self._device_route_pos = 0.0   # 0.0 to 1.0 slide indicator
+
+        # Micro-Interactions & Hardware Status
+        self._tilt_x = 0.0
+        self._tilt_y = 0.0
+        self._tilt_target_x = 0.0
+        self._tilt_target_y = 0.0
+        self._download_progress = 0.0
+        self._auto_hide_enabled = False
+        self._active_vibrant_c = QColor("#FFD600")
+        self._active_secondary_c = QColor("#FF8C00")
+
+        self._phone_battery = 84
+        self._phone_connected = False
+        self._privacy_mic = False
+        self._privacy_cam = False
+
         self._flash_timer = QTimer(self)
         self._flash_timer.setSingleShot(True)
         self._flash_timer.timeout.connect(self._on_flash_timeout)
@@ -434,10 +702,19 @@ class DynamicIslandWidget(QWidget):
                 if self.isVisible():
                     self.hide()
             else:
-                # Exited fullscreen game/video: restore if music is actively playing
-                if self._is_music_active() and not self.isVisible():
+                # Exited fullscreen game/video: restore immediately!
+                if not self.isVisible():
                     self.show()
                     self.raise_()
+
+    def wake_up(self):
+        """Forces the Dynamic Island to become visible, raise to top, and expand."""
+        self._is_fullscreen_suppressed = False
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.set_island_state("expanded")
+        self.set_glow_state("notification", duration_sec=3.0)
 
     # -------------------------------------------------------------
     # Window Flags & Positioning Flush at Top (y = 0)
@@ -451,6 +728,7 @@ class DynamicIslandWidget(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setStyleSheet(DASHBOARD_STYLESHEET)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
 
     def _get_target_rect(self, state: str) -> tuple[int, int, int, int]:
         cur_center = self.geometry().center()
@@ -467,8 +745,20 @@ class DynamicIslandWidget(QWidget):
             w = TOAST_WIDTH
             h = TOAST_HEIGHT
         elif state == "device_popup":
-            w = 370
-            h = 360
+            w = DEVICE_POPUP_WIDTH
+            h = DEVICE_POPUP_HEIGHT
+        elif state == "osd_hud":
+            w = OSD_HUD_WIDTH
+            h = OSD_HUD_HEIGHT
+        elif state == "call_live":
+            w = CALL_LIVE_WIDTH
+            h = CALL_LIVE_HEIGHT
+        elif state == "otp_pill":
+            w = OTP_PILL_WIDTH
+            h = OTP_PILL_HEIGHT
+        elif state == "file_shelf":
+            w = FILE_SHELF_WIDTH
+            h = FILE_SHELF_HEIGHT
         else:  # expanded
             w = EXPANDED_WIDTH
             h = EXPANDED_HEIGHT
@@ -481,7 +771,11 @@ class DynamicIslandWidget(QWidget):
             center_x = screen_geo.x() + screen_geo.width() * ratio_x
             x = int(center_x - w / 2)
             x = max(int(screen_geo.left()), min(int(screen_geo.right() - w), x))
-            y = int(screen_geo.top())
+            if getattr(self, "_auto_hide_enabled", False) and state == "compact" and not self._hovered:
+                # 4px translucent tab handle at y = 0
+                y = int(screen_geo.top() - h + 4)
+            else:
+                y = int(screen_geo.top())
 
         elif edge == "bottom":
             center_x = screen_geo.x() + screen_geo.width() * ratio_x
@@ -690,7 +984,7 @@ class DynamicIslandWidget(QWidget):
             self.set_glow_state("idle")
 
     # -------------------------------------------------------------
-    # Frosted Glass Album Art Generator
+    # Frosted Glass Album Art Generator & Accent Extractor
     # -------------------------------------------------------------
     def _update_album_art(self, art_path: Optional[str]):
         if not art_path or not os.path.exists(art_path):
@@ -698,7 +992,8 @@ class DynamicIslandWidget(QWidget):
                 self._album_art_pixmap = None
                 self._glass_bg_pixmap = None
                 self._current_art_path = None
-                self.lbl_cover_art.hide()
+                if hasattr(self, "cover_art"):
+                    self.cover_art.set_pixmap(None)
                 self.update()
             return
 
@@ -710,12 +1005,24 @@ class DynamicIslandWidget(QWidget):
             pix = QPixmap(art_path)
             if not pix.isNull():
                 self._album_art_pixmap = pix
-                self.lbl_cover_art.setPixmap(pix.scaled(
-                    48, 48,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation
-                ))
-                self.lbl_cover_art.show()
+                if hasattr(self, "cover_art"):
+                    self.cover_art.set_pixmap(pix)
+
+            # Dynamic Accent Extraction & Color Synchronization (400ms transition)
+            vibrant_c, secondary_c = extract_album_swatches(art_path)
+            self._active_vibrant_c = vibrant_c
+            self._active_secondary_c = secondary_c
+
+            if self._glow_state == "music" or self._media_info.get("is_playing", False):
+                self._target_glow_c1 = vibrant_c
+                self._target_glow_c2 = secondary_c
+
+            if hasattr(self, "visualizer"):
+                self.visualizer.set_accent_colors(vibrant_c, secondary_c)
+            if hasattr(self, "timeline_scrubber"):
+                self.timeline_scrubber.set_accent_color(vibrant_c)
+            if hasattr(self, "btn_play"):
+                self.btn_play.set_accent_color(vibrant_c)
 
             im = Image.open(art_path)
             w = max(440, EXPANDED_WIDTH)
@@ -746,20 +1053,49 @@ class DynamicIslandWidget(QWidget):
         main_layout.setContentsMargins(6, 4, 6, 6)
         main_layout.setSpacing(6)
 
-        # 1. Clean Top Bar
+        # 1. Clean Top Bar with Balanced Status Strip
         top_bar = QHBoxLayout()
         top_bar.setContentsMargins(4, 0, 4, 0)
+        top_bar.setSpacing(8)
 
         self.lbl_exp_clock = QLabel(self._time_str, self.dashboard_container)
         self.lbl_exp_clock.setFont(get_display_font(12))
         self.lbl_exp_clock.setStyleSheet("color: #FFFFFF; letter-spacing: 0.5px;")
 
+        # Hardware Privacy LEDs (Mic orange dot, Camera green dot)
+        self.led_container = QWidget(self.dashboard_container)
+        led_layout = QHBoxLayout(self.led_container)
+        led_layout.setContentsMargins(0, 0, 0, 0)
+        led_layout.setSpacing(5)
+
+        self.led_mic = QLabel("●", self.led_container)
+        self.led_mic.setStyleSheet("color: #FF9500; font-size: 8px;")
+        self.led_mic.setToolTip("Microphone Active")
+        self.led_mic.setVisible(False)
+
+        self.led_cam = QLabel("●", self.led_container)
+        self.led_cam.setStyleSheet("color: #34C759; font-size: 8px;")
+        self.led_cam.setToolTip("Camera Active")
+        self.led_cam.setVisible(False)
+
+        led_layout.addWidget(self.led_mic)
+        led_layout.addWidget(self.led_cam)
+
+        # Dynamic Phone Battery Slot
+        self.lbl_exp_phone_battery = QLabel("📱 84%", self.dashboard_container)
+        self.lbl_exp_phone_battery.setFont(get_microlabel_font())
+        self.lbl_exp_phone_battery.setStyleSheet("color: #56CCF2;")
+        self.lbl_exp_phone_battery.setVisible(False)
+
+        # PC Battery
         self.lbl_exp_battery = QLabel("🔋 99%", self.dashboard_container)
         self.lbl_exp_battery.setFont(get_microlabel_font())
         self.lbl_exp_battery.setStyleSheet("color: #38EF7D;")
 
         top_bar.addWidget(self.lbl_exp_clock)
         top_bar.addStretch()
+        top_bar.addWidget(self.led_container)
+        top_bar.addWidget(self.lbl_exp_phone_battery)
         top_bar.addWidget(self.lbl_exp_battery)
 
         main_layout.addLayout(top_bar)
@@ -768,41 +1104,39 @@ class DynamicIslandWidget(QWidget):
         self.card_media = QFrame(self.dashboard_container)
         self.card_media.setStyleSheet("""
             QFrame {
-                background: rgba(14, 14, 20, 0.65);
+                background: rgba(14, 14, 20, 0.70);
                 border: 1px solid rgba(255, 255, 255, 0.10);
                 border-radius: 18px;
             }
         """)
         media_card_layout = QVBoxLayout(self.card_media)
-        media_card_layout.setContentsMargins(12, 8, 12, 8)
-        media_card_layout.setSpacing(6)
+        media_card_layout.setContentsMargins(12, 10, 12, 12)
+        media_card_layout.setSpacing(5)
 
         # Track Row
         track_row = QHBoxLayout()
         track_row.setSpacing(10)
 
-        self.lbl_cover_art = QLabel(self.card_media)
-        self.lbl_cover_art.setFixedSize(46, 46)
-        self.lbl_cover_art.setStyleSheet("""
-            QLabel {
-                border-radius: 12px;
-                background-color: rgba(255, 255, 255, 0.06);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-            }
-        """)
-        self.lbl_cover_art.setScaledContents(True)
-        track_row.addWidget(self.lbl_cover_art)
+        # Apple Music Style Album Art Squircle Card
+        self.cover_art = CoverArtWidget(size=42, parent=self.card_media)
+        track_row.addWidget(self.cover_art)
 
+        # Track Info Box with Title & Artist Descender Clearance
         track_info_box = QVBoxLayout()
-        track_info_box.setSpacing(2)
+        track_info_box.setSpacing(3)
+        track_info_box.setContentsMargins(0, 0, 0, 0)
 
         self.lbl_exp_title = QLabel("", self.card_media)
-        self.lbl_exp_title.setFont(get_display_font(13))
-        self.lbl_exp_title.setStyleSheet("color: #FFFFFF; border: none; background: transparent;")
+        self.lbl_exp_title.setFont(get_display_font(11))
+        self.lbl_exp_title.setFixedHeight(22)
+        self.lbl_exp_title.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.lbl_exp_title.setStyleSheet("color: #FFFFFF; border: none; background: transparent; padding: 0px; margin: 0px;")
 
         self.lbl_exp_artist = QLabel("", self.card_media)
-        self.lbl_exp_artist.setFont(get_subtext_font(11))
-        self.lbl_exp_artist.setStyleSheet("color: #A0A0AB; border: none; background: transparent;")
+        self.lbl_exp_artist.setFont(get_subtext_font(10))
+        self.lbl_exp_artist.setFixedHeight(18)
+        self.lbl_exp_artist.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.lbl_exp_artist.setStyleSheet("color: #A0A0AB; border: none; background: transparent; padding: 0px; margin: 0px;")
 
         track_info_box.addWidget(self.lbl_exp_title)
         track_info_box.addWidget(self.lbl_exp_artist)
@@ -812,10 +1146,10 @@ class DynamicIslandWidget(QWidget):
 
         # 26-Bar Equalizer
         self.visualizer = AudioVisualizerWidget(num_bars=26, bar_width=3, bar_spacing=3, parent=self.card_media)
-        self.visualizer.setFixedHeight(28)
+        self.visualizer.setFixedHeight(20)
         media_card_layout.addWidget(self.visualizer, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Progress Row
+        # Progress Row with Interactive Timeline Scrubber
         prog_row = QHBoxLayout()
         prog_row.setSpacing(8)
 
@@ -823,35 +1157,22 @@ class DynamicIslandWidget(QWidget):
         self.lbl_time_pos.setFont(get_microlabel_font())
         self.lbl_time_pos.setStyleSheet("color: #A0A0AB; border: none; background: transparent;")
 
-        self.prog_bar = QProgressBar(self.card_media)
-        self.prog_bar.setFixedHeight(3)
-        self.prog_bar.setTextVisible(False)
-        self.prog_bar.setRange(0, 100)
-        self.prog_bar.setValue(0)
-        self.prog_bar.setStyleSheet("""
-            QProgressBar {
-                background: rgba(255, 255, 255, 0.12);
-                border: none;
-                border-radius: 1px;
-            }
-            QProgressBar::chunk {
-                background: #FFD600;
-                border-radius: 1px;
-            }
-        """)
+        self.timeline_scrubber = TimelineScrubber(self.card_media)
+        self.timeline_scrubber.seek_requested.connect(self._on_seek_requested)
 
         self.lbl_time_dur = QLabel("00:00", self.card_media)
         self.lbl_time_dur.setFont(get_microlabel_font())
         self.lbl_time_dur.setStyleSheet("color: #A0A0AB; border: none; background: transparent;")
 
         prog_row.addWidget(self.lbl_time_pos)
-        prog_row.addWidget(self.prog_bar, 1)
+        prog_row.addWidget(self.timeline_scrubber, 1)
         prog_row.addWidget(self.lbl_time_dur)
         media_card_layout.addLayout(prog_row)
 
         # Vector Playback Controls
         controls_layout = QHBoxLayout()
-        controls_layout.setSpacing(12)
+        controls_layout.setSpacing(16)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.addStretch()
 
         self.btn_prev = VectorMediaButton(mode="prev", is_primary=False, parent=self.card_media)
@@ -894,6 +1215,13 @@ class DynamicIslandWidget(QWidget):
         self.lbl_exp_battery.setText(f"{icon} {pct}%")
         self.update()
 
+    def _on_seek_requested(self, ratio: float):
+        dur = self._media_info.get("duration", 210) or 210
+        pos = ratio * dur
+        self.media_service.seek(pos)
+        self._media_info["position"] = int(pos)
+        self.lbl_time_pos.setText(format_seconds(int(pos)))
+
     def _on_media_updated(self, info: dict):
         prev_has_media = self._media_info.get("has_media", False)
         self._media_info = info
@@ -905,16 +1233,22 @@ class DynamicIslandWidget(QWidget):
         dur = info.get("duration", 210) or 210
 
         self.visualizer.set_playing(is_playing)
-        self.lbl_exp_title.setText(title)
-        self.lbl_exp_artist.setText(artist)
+
+        # Crisp elided text preventing horizontal overflow while preserving descender height
+        fm_t = QFontMetrics(self.lbl_exp_title.font())
+        self.lbl_exp_title.setText(fm_t.elidedText(title, Qt.TextElideMode.ElideRight, 260))
+
+        fm_a = QFontMetrics(self.lbl_exp_artist.font())
+        self.lbl_exp_artist.setText(fm_a.elidedText(artist, Qt.TextElideMode.ElideRight, 260))
+
         self.btn_play.set_mode("pause" if is_playing else "play")
 
-        pct = int((pos / dur) * 100) if dur > 0 else 0
-        self.prog_bar.setValue(min(100, max(0, pct)))
-        self.lbl_time_pos.setText(format_seconds(pos))
-        self.lbl_time_dur.setText(format_seconds(dur))
+        prog_ratio = float(pos / dur) if dur > 0 else 0.0
+        self.timeline_scrubber.set_progress(prog_ratio)
+        self.lbl_time_pos.setText(format_seconds(int(pos)))
+        self.lbl_time_dur.setText(format_seconds(int(dur)))
 
-        # Update Frosted Glass Album Cover
+        # Update Frosted Glass Album Cover & Accent
         art_path = info.get("album_art_path")
         self._update_album_art(art_path)
 
@@ -1042,6 +1376,47 @@ class DynamicIslandWidget(QWidget):
         self._liquid_vx *= 0.82
         self._liquid_vy *= 0.82
 
+        # 3D Tilt Ballistics for Expanded Glass Card (Spec 5.1)
+        self._tilt_x += (self._tilt_target_x - self._tilt_x) * 0.16
+        self._tilt_y += (self._tilt_target_y - self._tilt_y) * 0.16
+        if self._island_state == "expanded" and hasattr(self, "dashboard_container"):
+            tx = int(self._tilt_x)
+            ty = int(self._tilt_y)
+            if self.dashboard_container.layout():
+                self.dashboard_container.layout().setContentsMargins(
+                    max(0, 6 + tx), max(0, 4 + ty), max(0, 6 - tx), max(0, 6 - ty)
+                )
+
+        # Pulse Phase for Live Call & Device Audio Route Slider
+        self._call_pulse += 0.08
+        target_route_pos = 1.0 if getattr(self, "_device_route", "device") == "speakers" else 0.0
+        self._device_route_pos += (target_route_pos - self._device_route_pos) * 0.22
+
+        # Throttled Download Progress Hairline Checker (~1 Hz)
+        now = time.time()
+        if now - getattr(self, "_last_dl_check", 0) > 1.2:
+            self._last_dl_check = now
+            dl_dir = os.path.expanduser("~/Downloads")
+            try:
+                if os.path.exists(dl_dir):
+                    part_files = [
+                        os.path.join(dl_dir, f) for f in os.listdir(dl_dir)
+                        if f.endswith(".crdownload") or f.endswith(".part")
+                    ]
+                    # Only actively progressing downloads modified in the last 20 seconds
+                    active_parts = [
+                        f for f in part_files
+                        if (now - os.path.getmtime(f)) < 20.0
+                    ]
+                    if active_parts:
+                        latest = max(active_parts, key=os.path.getmtime)
+                        sz = os.path.getsize(latest)
+                        self._download_progress = min(0.95, (sz % (10 * 1024 * 1024)) / (10 * 1024 * 1024))
+                    elif not getattr(self, "_sim_download_active", False):
+                        self._download_progress = 0.0
+            except Exception:
+                pass
+
         self.update()
 
     def _on_ticker_tick(self):
@@ -1056,10 +1431,68 @@ class DynamicIslandWidget(QWidget):
     # -------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+
+            # 1. Check OTP Copy button (Spec 3.3)
+            if self._island_state == "otp_pill" and hasattr(self, "_otp_copy_rect"):
+                if self._otp_copy_rect.contains(pos):
+                    code = self._otp_info.get("code", "482 910")
+                    app_inst = QGuiApplication.instance()
+                    if app_inst:
+                        app_inst.clipboard().setText(code.replace(" ", ""))
+                    self._otp_info["copied"] = True
+                    self.update()
+                    QTimer.singleShot(1500, self.collapse_to_compact)
+                    return
+
+            # 2. Check Live Call Answer / Decline buttons (Spec 3.2)
+            if self._island_state == "call_live":
+                if hasattr(self, "_call_decline_rect") and self._call_decline_rect.contains(pos):
+                    self._call_info["status"] = "Call Declined"
+                    self.update()
+                    QTimer.singleShot(600, self.collapse_to_compact)
+                    return
+                elif hasattr(self, "_call_answer_rect") and self._call_answer_rect.contains(pos):
+                    self._call_info["status"] = "Connected • 00:01"
+                    self.update()
+                    QTimer.singleShot(2500, self.collapse_to_compact)
+                    return
+
+            # 3. Check File Shelf Clear button (Spec 3.4)
+            if self._island_state == "file_shelf" and hasattr(self, "_shelf_clear_rect"):
+                if self._shelf_clear_rect.contains(pos):
+                    self._shelf_files.clear()
+                    self.update()
+                    return
+
+            # 4. Check Device Audio Route Toggle (Spec 4.2)
+            if self._island_state == "device_popup" and hasattr(self, "_device_route_rect"):
+                if self._device_route_rect.contains(pos):
+                    cur = getattr(self, "_device_route", "device")
+                    self._device_route = "speakers" if cur == "device" else "device"
+                    self.update()
+                    return
+
+            # 5. Check Device Done / Close
+            if self._island_state == "device_popup":
+                if hasattr(self, "_device_done_rect") and self._device_done_rect.contains(pos):
+                    self.collapse_to_compact()
+                    return
+                elif hasattr(self, "_device_close_rect") and self._device_close_rect.contains(pos):
+                    self.collapse_to_compact()
+                    return
+
+            # 6. Check Toast Close
+            if self._island_state == "toast" and hasattr(self, "_toast_close_rect"):
+                if self._toast_close_rect.contains(pos):
+                    self.collapse_to_compact()
+                    return
+
             self._drag_start_global = event.globalPosition().toPoint()
             self._drag_start_pos = self.pos()
             self._drag_last_pos = event.globalPosition().toPoint()
             self._is_dragging = False
+
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -1123,9 +1556,39 @@ class DynamicIslandWidget(QWidget):
                 self.update()
                 return
 
-        # 2. Device pop-up interactions
-        if self._island_state == "device_popup":
-            pos = event.position()
+        # 2. Interactive Hovers & 3D Tilt
+        pos = event.position()
+        if self._island_state == "expanded":
+            w = float(self.width())
+            h = float(self.height())
+            norm_x = (pos.x() - w / 2.0) / (w / 2.0)
+            norm_y = (pos.y() - h / 2.0) / (h / 2.0)
+            self._tilt_target_x = max(-1.0, min(1.0, norm_x)) * 3.5
+            self._tilt_target_y = max(-1.0, min(1.0, norm_y)) * 2.5
+        elif self._island_state == "otp_pill" and hasattr(self, "_otp_copy_rect"):
+            if self._otp_copy_rect.contains(pos):
+                self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                return
+            else:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        elif self._island_state == "call_live":
+            if (hasattr(self, "_call_decline_rect") and self._call_decline_rect.contains(pos)) or \
+               (hasattr(self, "_call_answer_rect") and self._call_answer_rect.contains(pos)):
+                self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                return
+            else:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        elif self._island_state == "file_shelf" and hasattr(self, "_shelf_clear_rect"):
+            old_c = getattr(self, "_shelf_hover_clear", False)
+            self._shelf_hover_clear = self._shelf_clear_rect.contains(pos)
+            if old_c != self._shelf_hover_clear:
+                self.update()
+            if self._shelf_hover_clear:
+                self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                return
+            else:
+                self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        elif self._island_state == "device_popup":
             old_d = getattr(self, "_device_done_hovered", False)
             old_c = getattr(self, "_device_close_hovered", False)
             if hasattr(self, "_device_done_rect"):
@@ -1139,7 +1602,8 @@ class DynamicIslandWidget(QWidget):
 
             if old_d != self._device_done_hovered or old_c != self._device_close_hovered:
                 self.update()
-            if self._device_done_hovered or self._device_close_hovered:
+            if self._device_done_hovered or self._device_close_hovered or \
+               (hasattr(self, "_device_route_rect") and self._device_route_rect.contains(pos)):
                 self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             elif not self._is_dragging:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
@@ -1177,11 +1641,43 @@ class DynamicIslandWidget(QWidget):
 
             self._drag_start_global = None
             if self._island_state == "device_popup":
-                self.collapse_to_compact()
                 return
             elif self._island_state in ("compact", "toast"):
                 self.set_island_state("expanded")
         super().mouseReleaseEvent(event)
+
+    # -------------------------------------------------------------
+    # Drag and Drop File Shelf Handlers (Spec 3.4)
+    # -------------------------------------------------------------
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            if self._island_state != "file_shelf":
+                self.set_island_state("file_shelf")
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            files = []
+            for url in event.mimeData().urls():
+                lp = url.toLocalFile()
+                if lp and os.path.exists(lp):
+                    name = os.path.basename(lp)
+                    size = os.path.getsize(lp)
+                    files.append({"name": name, "path": lp, "size": size})
+            if files:
+                self._shelf_files.extend(files)
+            event.acceptProposedAction()
+            self.update()
+        else:
+            super().dropEvent(event)
 
     # -------------------------------------------------------------
     # Organic Curvy Hardware Notch Path Generator
@@ -1193,15 +1689,30 @@ class DynamicIslandWidget(QWidget):
 
         if self._island_state == "compact":
             r_bot = NOTCH_RADIUS_BOT
+            base_r_ear = NOTCH_RADIUS_TOP
         elif self._island_state == "device_popup":
             r_bot = 32.0
+            base_r_ear = NOTCH_RADIUS_TOP
+        elif self._island_state == "osd_hud":
+            r_bot = OSD_HUD_R_BOT
+            base_r_ear = OSD_HUD_R_TOP
+        elif self._island_state == "call_live":
+            r_bot = CALL_LIVE_R_BOT
+            base_r_ear = CALL_LIVE_R_TOP
+        elif self._island_state == "otp_pill":
+            r_bot = OTP_PILL_R_BOT
+            base_r_ear = OTP_PILL_R_TOP
+        elif self._island_state == "file_shelf":
+            r_bot = FILE_SHELF_R_BOT
+            base_r_ear = FILE_SHELF_R_TOP
         else:
             r_bot = EXPANDED_RADIUS
+            base_r_ear = NOTCH_RADIUS_TOP
 
         path = QPainterPath()
 
         if edge == "top":
-            r_ear = NOTCH_RADIUS_TOP * morph
+            r_ear = base_r_ear * morph
             if r_ear > 0.5:
                 path.moveTo(0, 0)
                 path.cubicTo(r_ear * 0.4, 0, r_ear, r_ear * 0.4, r_ear, r_ear)
@@ -1216,7 +1727,7 @@ class DynamicIslandWidget(QWidget):
                 path.addRoundedRect(QRectF(0, 0, w, h), r_cap, r_cap)
 
         elif edge == "bottom":
-            r_ear = NOTCH_RADIUS_TOP * morph
+            r_ear = base_r_ear * morph
             if r_ear > 0.5:
                 path.moveTo(0, h)
                 path.cubicTo(r_ear * 0.4, h, r_ear, h - r_ear * 0.4, r_ear, h - r_ear)
@@ -1362,6 +1873,14 @@ class DynamicIslandWidget(QWidget):
             self._paint_toast_notch(painter, w, h)
         elif self._island_state == "device_popup":
             self._paint_device_popup_notch(painter, w, h)
+        elif self._island_state == "osd_hud":
+            self._paint_osd_hud(painter, w, h)
+        elif self._island_state == "call_live":
+            self._paint_call_live(painter, w, h)
+        elif self._island_state == "otp_pill":
+            self._paint_otp_pill(painter, w, h)
+        elif self._island_state == "file_shelf":
+            self._paint_file_shelf(painter, w, h)
 
         painter.restore()
 
@@ -1375,6 +1894,14 @@ class DynamicIslandWidget(QWidget):
         highlight_alpha = 28 if self._hovered else 16
         painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
         painter.drawPath(notch_path)
+
+        # 9. Smart Auto-Hide Peek Tab Handle (Spec 5.3)
+        if getattr(self, "_auto_hide_enabled", False) and self._island_state == "compact" and not self._hovered:
+            handle_w = 60.0
+            handle_rect = QRectF((w - handle_w) / 2.0, h - 3.5, handle_w, 3.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 75)))
+            painter.drawRoundedRect(handle_rect, 1.5, 1.5)
 
     def _paint_moving_gradient(self, painter: QPainter, w: float, h: float):
         t = self._gradient_shift
@@ -1474,7 +2001,8 @@ class DynamicIslandWidget(QWidget):
 
         has_media = bool(self._media_info.get("has_media", False))
         if not has_media:
-            # ── Idle Mode: Battery & Status Indicator ────────────
+            # ── Idle Mode: Status Strip Balance (Phone Battery + Privacy LEDs + PC Battery) ────────
+            right_offset = content_right
             pct = self._battery_info.get("percent", 100)
             plugged = self._battery_info.get("is_plugged", False)
             icon = "⚡" if plugged else "🔋"
@@ -1485,8 +2013,35 @@ class DynamicIslandWidget(QWidget):
             painter.setPen(QColor("#38EF7D"))
             fm_b = QFontMetrics(batt_font)
             bw = fm_b.horizontalAdvance(batt_text)
-            batt_rect = QRectF(w - r_top - bw - 12.0, (h - fm_b.height()) / 2.0, bw + 2.0, fm_b.height())
+            batt_rect = QRectF(right_offset - bw, (h - fm_b.height()) / 2.0, bw + 2.0, fm_b.height())
             painter.drawText(batt_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, batt_text)
+
+            curr_r = right_offset - bw - 8.0
+
+            # Dynamic Phone Battery Slot (Spec 1.4)
+            if getattr(self, "_phone_connected", False):
+                phone_text = f"📱 {self._phone_battery}%"
+                painter.setFont(batt_font)
+                painter.setPen(QColor("#56CCF2"))
+                fm_p = QFontMetrics(batt_font)
+                pw = fm_p.horizontalAdvance(phone_text)
+                p_rect = QRectF(curr_r - pw, (h - fm_p.height()) / 2.0, pw + 2.0, fm_p.height())
+                painter.drawText(p_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, phone_text)
+                curr_r -= (pw + 8.0)
+
+            # Hardware Privacy LEDs (Mic orange dot, Camera green dot) (Spec 1.4)
+            if getattr(self, "_privacy_mic", False):
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#FF9500"))
+                painter.drawEllipse(QRectF(curr_r - 6.0, (h - 6.0) / 2.0, 6.0, 6.0))
+                curr_r -= 9.0
+
+            if getattr(self, "_privacy_cam", False):
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor("#34C759"))
+                painter.drawEllipse(QRectF(curr_r - 6.0, (h - 6.0) / 2.0, 6.0, 6.0))
+                curr_r -= 9.0
+
             return
 
         # ── Album Art Squircle (24×24) ───────────────────────────
@@ -1824,31 +2379,31 @@ class DynamicIslandWidget(QWidget):
         elided_sub = fm_s.elidedText(subtitle, Qt.TextElideMode.ElideRight, int(header_w))
         painter.drawText(QRectF(header_x, 72.0, header_w, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_sub)
 
-        # ── 7. Center Stage: Hero 3D Device Model (175 × 175) ────────
-        art_size = 175.0
+        # ── 7. Center Stage: Hero 3D Device Model (125 × 125) ────────
+        art_size = 125.0
         art_cx = w * 0.5
-        art_cy = 185.0
+        art_cy = 148.0
 
         # Subtle floating bob physics
-        bob = math.sin(t * 2.2) * 3.5
+        bob = math.sin(t * 2.2) * 2.5
         dev_cy = art_cy + bob
 
         # Pedestal Ambient Halo Glow
-        halo = QRadialGradient(QPointF(art_cx, dev_cy + 10.0), 76.0)
+        halo = QRadialGradient(QPointF(art_cx, dev_cy + 8.0), 65.0)
         halo.setColorAt(0.0, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 55))
         halo.setColorAt(0.6, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 15))
         halo.setColorAt(1.0, QColor(0, 0, 0, 0))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(halo))
-        painter.drawEllipse(QRectF(art_cx - 80.0, dev_cy - 40.0, 160.0, 120.0))
+        painter.drawEllipse(QRectF(art_cx - 70.0, dev_cy - 35.0, 140.0, 105.0))
 
         # Soft 3D Contact Shadow
-        shadow = QRadialGradient(QPointF(art_cx, art_cy + 68.0), 55.0)
-        shadow.setColorAt(0.0, QColor(0, 0, 0, 180))
-        shadow.setColorAt(0.55, QColor(0, 0, 0, 60))
+        shadow = QRadialGradient(QPointF(art_cx, dev_cy + 58.0), 50.0)
+        shadow.setColorAt(0.0, QColor(0, 0, 0, 175))
+        shadow.setColorAt(0.55, QColor(0, 0, 0, 55))
         shadow.setColorAt(1.0, QColor(0, 0, 0, 0))
         painter.setBrush(QBrush(shadow))
-        painter.drawEllipse(QRectF(art_cx - 65.0, art_cy + 60.0, 130.0, 20.0))
+        painter.drawEllipse(QRectF(art_cx - 52.0, dev_cy + 52.0, 104.0, 14.0))
 
         # Render floating 3D Device Art
         pix = self._device_pixmaps.get(cat)
@@ -1862,30 +2417,97 @@ class DynamicIslandWidget(QWidget):
             iy = dev_cy - scaled_dev.height() / 2.0
             painter.drawPixmap(int(ix), int(iy), scaled_dev)
 
-        # ── 8. Mini Live Status Indicator (Equalizer + Audio Ready) ──
-        eq_w = 12 * 4.4
-        eq_x = art_cx - eq_w / 2.0 - 28.0
-        eq_y = art_cy + 82.0
-        phase = getattr(self, "_mini_eq_phase", 0.0)
-        for idx in range(12):
-            bh = 3.0 + 9.5 * (math.sin(phase * 1.6 + idx * 0.55) ** 2)
-            bx = eq_x + idx * 4.4
-            by = eq_y + (12.0 - bh) / 2.0
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(accent_col))
-            painter.drawRoundedRect(QRectF(bx, by, 2.2, bh), 1.0, 1.0)
+        # ── 8. Segmented Battery Ring & Percentage Badge (Spec 4.1) ──
+        badge_w = 146.0
+        badge_h = 26.0
+        badge_x = (w - badge_w) / 2.0
+        badge_y = 224.0
+        badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
 
-        f_stat = get_microlabel_font()
-        f_stat.setBold(True)
-        painter.setFont(f_stat)
-        painter.setPen(QColor(255, 255, 255, 210))
-        painter.drawText(QRectF(eq_x + eq_w + 8.0, eq_y - 2.0, 85.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "AUDIO READY")
+        painter.setPen(QPen(QColor(255, 255, 255, 28), 1.0))
+        painter.setBrush(QBrush(QColor(20, 22, 32, 220)))
+        painter.drawRoundedRect(badge_rect, 13.0, 13.0)
 
-        # ── 9. Bottom Action Button: Hero Wide Pill ('Done') ──────────
+        dev_batt = self._device_info.get("battery", 86)
+        arc_cx = badge_x + 16.0
+        arc_cy = badge_y + 13.0
+        arc_r = 6.0
+        arc_rect = QRectF(arc_cx - arc_r, arc_cy - arc_r, arc_r * 2.0, arc_r * 2.0)
+
+        # Battery track
+        painter.setPen(QPen(QColor(255, 255, 255, 30), 2.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(arc_rect)
+
+        # Active battery arc
+        arc_col = QColor("#38EF7D") if dev_batt >= 20 else QColor("#FF453A")
+        painter.setPen(QPen(arc_col, 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        span_angle = int(-dev_batt * 360 * 16 / 100)
+        painter.drawArc(arc_rect, 90 * 16, span_angle)
+
+        f_batt_txt = get_microlabel_font()
+        f_batt_txt.setBold(True)
+        painter.setFont(f_batt_txt)
+        painter.setPen(COLOR_TEXT_PRIMARY)
+        painter.drawText(QRectF(arc_cx + 10.0, badge_y, badge_w - 32.0, badge_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"Battery • {dev_batt}%")
+
+        # ── 9. Inline Audio Routing Pill (Spec 4.2) ──────────────────
         btn_w = w - (r_top * 2 + 28.0)
-        btn_h = 44.0
+        btn_h = 42.0
         btn_x = (w - btn_w) / 2.0
-        btn_y = h - btn_h - 18.0
+        btn_y = 302.0
+
+        route_w = btn_w
+        route_h = 34.0
+        route_x = btn_x
+        route_y = 260.0
+        self._device_route_rect = QRectF(route_x, route_y, route_w, route_h)
+
+        # Base capsule
+        painter.setPen(QPen(QColor(255, 255, 255, 26), 1.0))
+        painter.setBrush(QBrush(QColor(16, 18, 26, 230)))
+        painter.drawRoundedRect(self._device_route_rect, 17.0, 17.0)
+
+        # Slide indicator
+        seg_w = (route_w - 4.0) / 2.0
+        slide_x = route_x + 2.0 + getattr(self, "_device_route_pos", 0.0) * seg_w
+        ind_rect = QRectF(slide_x, route_y + 2.0, seg_w, route_h - 4.0)
+        painter.setPen(QPen(QColor(255, 255, 255, 42), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 32)))
+        painter.drawRoundedRect(ind_rect, 15.0, 15.0)
+
+        is_dev = (getattr(self, "_device_route", "device") == "device")
+
+        # Seg 1: Device (Vector Headphone + Title)
+        hx = route_x + 18.0
+        hy = route_y + route_h / 2.0
+        painter.setPen(QPen(COLOR_TEXT_PRIMARY if is_dev else COLOR_TEXT_MUTED, 1.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(hx - 5.0, hy - 6.0, 10.0, 9.0), 0, 180 * 16)
+        painter.setBrush(QBrush(COLOR_TEXT_PRIMARY if is_dev else COLOR_TEXT_MUTED))
+        painter.drawRoundedRect(QRectF(hx - 6.0, hy - 2.0, 2.5, 6.0), 1.0, 1.0)
+        painter.drawRoundedRect(QRectF(hx + 3.5, hy - 2.0, 2.5, 6.0), 1.0, 1.0)
+
+        f_r = get_microlabel_font()
+        f_r.setBold(True)
+        painter.setFont(f_r)
+        painter.setPen(COLOR_TEXT_PRIMARY if is_dev else COLOR_TEXT_MUTED)
+        fm_seg1 = painter.fontMetrics()
+        short_t = fm_seg1.elidedText(title, Qt.TextElideMode.ElideRight, int(seg_w - 38.0))
+        painter.drawText(QRectF(route_x + 28.0, route_y, seg_w - 32.0, route_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, short_t)
+
+        # Seg 2: PC Speakers (Vector PC + "PC Speakers")
+        sx = route_x + 2.0 + seg_w + 18.0
+        sy = route_y + route_h / 2.0
+        painter.setPen(QPen(COLOR_TEXT_PRIMARY if not is_dev else COLOR_TEXT_MUTED, 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(QRectF(sx - 6.0, sy - 5.0, 12.0, 8.0), 1.0, 1.0)
+        painter.drawLine(QPointF(sx - 8.0, sy + 4.5), QPointF(sx + 8.0, sy + 4.5))
+
+        painter.setPen(COLOR_TEXT_PRIMARY if not is_dev else COLOR_TEXT_MUTED)
+        painter.drawText(QRectF(route_x + 2.0 + seg_w + 28.0, route_y, seg_w - 32.0, route_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "PC Speakers")
+
+        # ── 10. Bottom Action Button: Hero Wide Pill ('Done') ────────
         self._device_done_rect = QRectF(btn_x, btn_y, btn_w, btn_h)
 
         is_done_hov = getattr(self, "_device_done_hovered", False)
@@ -1897,7 +2519,7 @@ class DynamicIslandWidget(QWidget):
         btn_grad.setColorAt(1.0, bot_col)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(btn_grad))
-        painter.drawRoundedRect(self._device_done_rect, 22.0, 22.0)
+        painter.drawRoundedRect(self._device_done_rect, 21.0, 21.0)
 
         # Button Top Specular Rim Highlight Line
         btn_rim = QLinearGradient(btn_x, btn_y, btn_x + btn_w, btn_y)
@@ -1913,3 +2535,350 @@ class DynamicIslandWidget(QWidget):
         painter.setFont(f_btn)
         painter.setPen(QColor("#FFFFFF"))
         painter.drawText(self._device_done_rect, Qt.AlignmentFlag.AlignCenter, "Done")
+
+    # -------------------------------------------------------------
+    # New UI States QPainter Rendering Engines (Spec Section 3)
+    # -------------------------------------------------------------
+    def _paint_osd_hud(self, painter: QPainter, w: float, h: float):
+        """
+        Renders compact 220x36 liquid-glass OSD HUD for volume, brightness, caps.
+        """
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        glyph = self._osd_info.get("glyph", "🔊")
+        val = max(0.0, min(1.0, float(self._osd_info.get("value", 0.5))))
+        label = self._osd_info.get("label", f"{int(val * 100)}%")
+
+        # Left glyph icon
+        f_glyph = get_display_font(12)
+        painter.setFont(f_glyph)
+        painter.setPen(COLOR_TEXT_PRIMARY)
+        painter.drawText(QRectF(14.0, 0.0, 24.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter, glyph)
+
+        # Center fill bar with specular sheen
+        bar_x = 44.0
+        bar_w = w - bar_x - 52.0
+        bar_h = 6.0
+        bar_y = (h - bar_h) / 2.0
+
+        bar_bg = QRectF(bar_x, bar_y, bar_w, bar_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(255, 255, 255, 28))
+        painter.drawRoundedRect(bar_bg, 3.0, 3.0)
+
+        fill_w = bar_w * val
+        if fill_w > 0:
+            fill_r = QRectF(bar_x, bar_y, fill_w, bar_h)
+            grad = QLinearGradient(bar_x, bar_y, bar_x + fill_w, bar_y)
+            grad.setColorAt(0.0, QColor("#FFFFFF"))
+            grad.setColorAt(1.0, QColor("#E0E0EB"))
+            painter.setBrush(QBrush(grad))
+            painter.drawRoundedRect(fill_r, 3.0, 3.0)
+
+        # Right percentage readout
+        f_val = get_display_font(10)
+        painter.setFont(f_val)
+        painter.setPen(COLOR_TEXT_SECONDARY)
+        painter.drawText(QRectF(w - 48.0, 0.0, 38.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, label)
+
+    def _paint_call_live(self, painter: QPainter, w: float, h: float):
+        """
+        Renders live phone call card (420x74) with pulsing avatar and vector Answer/Decline buttons.
+        """
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        name = self._call_info.get("name", "Incoming Call")
+        subtitle = self._call_info.get("status", "iPhone • Incoming Call")
+
+        # 1. Left circular avatar with pulsing green ring
+        av_x = 24.0
+        av_y = (h - 42.0) / 2.0
+        av_size = 42.0
+        av_cx = av_x + av_size / 2.0
+        av_cy = av_y + av_size / 2.0
+
+        # Pulsing green ring
+        pulse = (math.sin(getattr(self, "_call_pulse", 0.0) * 2.0) + 1.0) / 2.0
+        ring_r = av_size / 2.0 + 3.0 + pulse * 6.0
+        ring_alpha = int(140 * (1.0 - pulse * 0.7))
+        painter.setPen(QPen(QColor(52, 199, 89, ring_alpha), 2.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QPointF(av_cx, av_cy), ring_r, ring_r)
+
+        # Avatar circle
+        painter.setPen(Qt.PenStyle.NoPen)
+        av_grad = QLinearGradient(av_x, av_y, av_x, av_y + av_size)
+        av_grad.setColorAt(0.0, QColor("#3A3D52"))
+        av_grad.setColorAt(1.0, QColor("#222433"))
+        painter.setBrush(QBrush(av_grad))
+        painter.drawEllipse(QRectF(av_x, av_y, av_size, av_size))
+
+        painter.setFont(get_display_font(15))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(QRectF(av_x, av_y, av_size, av_size), Qt.AlignmentFlag.AlignCenter, "👤")
+
+        # 2. Center caller name + subtitle
+        text_x = av_x + av_size + 14.0
+        text_w = w - text_x - 110.0
+
+        f_name = get_display_font(13)
+        f_name.setBold(True)
+        painter.setFont(f_name)
+        painter.setPen(COLOR_TEXT_PRIMARY)
+        painter.drawText(QRectF(text_x, av_y + 3.0, text_w, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, name)
+
+        f_sub = get_subtext_font(10)
+        painter.setFont(f_sub)
+        painter.setPen(COLOR_TEXT_SECONDARY)
+        painter.drawText(QRectF(text_x, av_y + 22.0, text_w, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, subtitle)
+
+        # 3. Right vector buttons: Decline (#FF3B30) and Answer (#34C759)
+        btn_r = 18.0
+        btn_y = (h - btn_r * 2.0) / 2.0
+
+        dec_x = w - 95.0
+        ans_x = w - 48.0
+        self._call_decline_rect = QRectF(dec_x, btn_y, btn_r * 2.0, btn_r * 2.0)
+        self._call_answer_rect = QRectF(ans_x, btn_y, btn_r * 2.0, btn_r * 2.0)
+
+        # Decline Button (#FF3B30)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#FF3B30"))
+        painter.drawEllipse(self._call_decline_rect)
+        painter.setFont(get_display_font(12))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(self._call_decline_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+
+        # Answer Button (#34C759)
+        painter.setBrush(QColor("#34C759"))
+        painter.drawEllipse(self._call_answer_rect)
+        painter.setFont(get_display_font(12))
+        painter.setPen(QColor("#FFFFFF"))
+        painter.drawText(self._call_answer_rect, Qt.AlignmentFlag.AlignCenter, "📞")
+
+    def _paint_otp_pill(self, painter: QPainter, w: float, h: float):
+        """
+        Renders 2FA verification code pill (360x54) with monospaced tabular numerals and copy button.
+        """
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        code = self._otp_info.get("code", "482 910")
+        app_name = self._otp_info.get("app", "Messages")
+        is_copied = self._otp_info.get("copied", False)
+
+        # Left app badge
+        badge_size = 32.0
+        badge_x = 16.0
+        badge_y = (h - badge_size) / 2.0
+        badge_rect = QRectF(badge_x, badge_y, badge_size, badge_size)
+
+        painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
+        painter.setBrush(QBrush(QColor(86, 204, 242, 45)))
+        painter.drawRoundedRect(badge_rect, 8.0, 8.0)
+
+        painter.setFont(get_display_font(13))
+        painter.setPen(QColor("#56CCF2"))
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "💬")
+
+        # Center: Title + Code in Monospaced Tabular Numerals
+        text_x = badge_x + badge_size + 12.0
+        text_w = w - text_x - 105.0
+
+        f_lbl = get_microlabel_font()
+        painter.setFont(f_lbl)
+        painter.setPen(QColor(255, 255, 255, 160))
+        painter.drawText(QRectF(text_x, 8.0, text_w, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"{app_name.upper()} • 2FA CODE")
+
+        f_code = get_monospaced_font(13)
+        painter.setFont(f_code)
+        painter.setPen(COLOR_TEXT_PRIMARY)
+        painter.drawText(QRectF(text_x, 24.0, text_w, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, code)
+
+        # Right Action Button: "Copy Code" -> "Copied ✓"
+        btn_w = 90.0
+        btn_h = 28.0
+        btn_x = w - btn_w - 14.0
+        btn_y = (h - btn_h) / 2.0
+        self._otp_copy_rect = QRectF(btn_x, btn_y, btn_w, btn_h)
+
+        if is_copied:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#34C759"))
+            painter.drawRoundedRect(self._otp_copy_rect, 14.0, 14.0)
+            painter.setFont(get_display_font(10))
+            painter.setPen(QColor("#FFFFFF"))
+            painter.drawText(self._otp_copy_rect, Qt.AlignmentFlag.AlignCenter, "Copied ✓")
+        else:
+            painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
+            painter.setBrush(QColor(255, 255, 255, 24))
+            painter.drawRoundedRect(self._otp_copy_rect, 14.0, 14.0)
+            painter.setFont(get_display_font(10))
+            painter.setPen(COLOR_TEXT_PRIMARY)
+            painter.drawText(self._otp_copy_rect, Qt.AlignmentFlag.AlignCenter, "Copy Code")
+
+    def _paint_file_shelf(self, painter: QPainter, w: float, h: float):
+        """
+        Renders drag-and-drop file shelf tray (460x126) with dashed drop zone and stashed file cards.
+        """
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        r_top = NOTCH_RADIUS_TOP
+        f_head = get_microlabel_font()
+        f_head.setBold(True)
+        painter.setFont(f_head)
+        painter.setPen(QColor("#56CCF2"))
+        painter.drawText(QRectF(r_top + 14.0, 6.0, 160.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📁 FILE STASH SHELF")
+
+        # Clear Button
+        clear_w = 48.0
+        clear_h = 18.0
+        clear_x = w - r_top - clear_w - 12.0
+        clear_y = 5.0
+        self._shelf_clear_rect = QRectF(clear_x, clear_y, clear_w, clear_h)
+        is_clear_hov = getattr(self, "_shelf_hover_clear", False)
+        painter.setPen(QPen(QColor(255, 255, 255, 50 if is_clear_hov else 25), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 35 if is_clear_hov else 15)))
+        painter.drawRoundedRect(self._shelf_clear_rect, 9.0, 9.0)
+        painter.setFont(get_microlabel_font())
+        painter.setPen(QColor("#FFFFFF" if is_clear_hov else "#A0A0AB"))
+        painter.drawText(self._shelf_clear_rect, Qt.AlignmentFlag.AlignCenter, "Clear")
+
+        # Dashed Luminous Drop Zone
+        zone_rect = QRectF(14.0, 26.0, w - 28.0, h - 38.0)
+        dash_pen = QPen(QColor(255, 255, 255, 55), 1.2, Qt.PenStyle.DashLine)
+        dash_pen.setDashPattern([4, 4])
+        painter.setPen(dash_pen)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 8)))
+        painter.drawRoundedRect(zone_rect, 14.0, 14.0)
+
+        if not self._shelf_files:
+            painter.setFont(get_subtext_font(11))
+            painter.setPen(QColor(255, 255, 255, 160))
+            painter.drawText(zone_rect, Qt.AlignmentFlag.AlignCenter, "📎  Drag & drop files here to stash temporarily")
+        else:
+            card_w = 88.0
+            card_h = 72.0
+            gap = 8.0
+            start_x = zone_rect.left() + 10.0
+            for idx, f in enumerate(self._shelf_files[:4]):
+                cx = start_x + idx * (card_w + gap)
+                cy = zone_rect.top() + (zone_rect.height() - card_h) / 2.0
+                card_r = QRectF(cx, cy, card_w, card_h)
+
+                painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
+                painter.setBrush(QBrush(QColor(30, 32, 45, 200)))
+                painter.drawRoundedRect(card_r, 10.0, 10.0)
+
+                painter.setFont(get_display_font(14))
+                painter.setPen(QColor("#56CCF2"))
+                painter.drawText(QRectF(cx, cy + 4.0, card_w, 24.0), Qt.AlignmentFlag.AlignCenter, "📄")
+
+                painter.setFont(get_microlabel_font())
+                painter.setPen(COLOR_TEXT_PRIMARY)
+                fm = painter.fontMetrics()
+                short_name = fm.elidedText(f["name"], Qt.TextElideMode.ElideMiddle, int(card_w - 8.0))
+                painter.drawText(QRectF(cx + 4.0, cy + 30.0, card_w - 8.0, 16.0), Qt.AlignmentFlag.AlignCenter, short_name)
+
+                sz_str = f"{f['size'] // 1024} KB" if f['size'] > 1024 else f"{f['size']} B"
+                painter.setFont(get_microlabel_font())
+                painter.setPen(COLOR_TEXT_MUTED)
+                painter.drawText(QRectF(cx + 4.0, cy + 48.0, card_w - 8.0, 14.0), Qt.AlignmentFlag.AlignCenter, sz_str)
+
+    # -------------------------------------------------------------
+    # State Trigger Methods for External Events & Telemetry
+    # -------------------------------------------------------------
+    def trigger_osd(self, glyph: str = "🔊", value: float = 0.68, label: str = "68%", osd_type: str = "volume"):
+        if self._is_fullscreen_suppressed:
+            return
+        self._osd_info = {
+            "glyph": glyph,
+            "value": max(0.0, min(1.0, value)),
+            "label": label,
+            "type": osd_type
+        }
+        self.set_glow_state("notification", duration_sec=1.8)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.set_island_state("osd_hud")
+        self._osd_dismiss_timer.start(1800)
+
+    def _on_osd_timeout(self):
+        if self._island_state == "osd_hud":
+            self.collapse_to_compact()
+
+    def trigger_call(self, name: str = "Mom", number: str = "", status: str = "iPhone • Incoming Call", avatar: str = "👤"):
+        if self._is_fullscreen_suppressed:
+            return
+        self._call_info = {
+            "name": name,
+            "number": number,
+            "status": status,
+            "avatar": avatar
+        }
+        self.set_glow_state("success", duration_sec=10.0)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.set_island_state("call_live")
+
+    def trigger_otp(self, code: str = "482 910", app: str = "Messages"):
+        if self._is_fullscreen_suppressed:
+            return
+        self._otp_info = {
+            "code": code,
+            "app": app,
+            "copied": False
+        }
+        self.set_glow_state("notification", duration_sec=6.0)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.set_island_state("otp_pill")
+        self._otp_dismiss_timer.start(5500)
+
+    def _on_otp_timeout(self):
+        if self._island_state == "otp_pill":
+            self.collapse_to_compact()
+
+    def trigger_file_shelf(self):
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.set_glow_state("notification", duration_sec=6.0)
+        self.set_island_state("file_shelf")
+
+    def set_download_progress(self, progress: float):
+        self._download_progress = max(0.0, min(1.0, progress))
+        self.update()
+
+    def toggle_auto_hide(self, enabled: Optional[bool] = None):
+        if enabled is None:
+            self._auto_hide_enabled = not getattr(self, "_auto_hide_enabled", False)
+        else:
+            self._auto_hide_enabled = bool(enabled)
+        self._apply_geometry_for_state(self._island_state, animate=True)
+        self.update()
+
+    def set_phone_battery(self, pct: int):
+        self._phone_battery = pct
+        self._phone_connected = True
+        if hasattr(self, "lbl_exp_phone_battery"):
+            self.lbl_exp_phone_battery.setText(f"📱 {pct}%")
+            self.lbl_exp_phone_battery.setVisible(True)
+        self.update()
+
+    def set_privacy_leds(self, mic: Optional[bool] = None, cam: Optional[bool] = None):
+        if mic is not None:
+            self._privacy_mic = mic
+            if hasattr(self, "led_mic"):
+                self.led_mic.setVisible(mic)
+        if cam is not None:
+            self._privacy_cam = cam
+            if hasattr(self, "led_cam"):
+                self.led_cam.setVisible(cam)
+        self.update()

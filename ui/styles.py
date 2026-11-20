@@ -15,7 +15,31 @@ TOAST_WIDTH = 420
 TOAST_HEIGHT = 68
 
 EXPANDED_WIDTH = 420
-EXPANDED_HEIGHT = 180
+EXPANDED_HEIGHT = 224
+
+# Section 3 New UI States & Geometry Matrix
+OSD_HUD_WIDTH = 220
+OSD_HUD_HEIGHT = 36
+OSD_HUD_R_TOP = 18.0
+OSD_HUD_R_BOT = 18.0
+
+CALL_LIVE_WIDTH = 420
+CALL_LIVE_HEIGHT = 74
+CALL_LIVE_R_TOP = 18.0
+CALL_LIVE_R_BOT = 24.0
+
+OTP_PILL_WIDTH = 360
+OTP_PILL_HEIGHT = 54
+OTP_PILL_R_TOP = 18.0
+OTP_PILL_R_BOT = 20.0
+
+FILE_SHELF_WIDTH = 460
+FILE_SHELF_HEIGHT = 126
+FILE_SHELF_R_TOP = 18.0
+FILE_SHELF_R_BOT = 26.0
+
+DEVICE_POPUP_WIDTH = 370
+DEVICE_POPUP_HEIGHT = 360
 
 NOTCH_RADIUS_TOP = 14.0   # Curvy flaring inverse fillets at top bezel
 NOTCH_RADIUS_BOT = 22.0   # Curvy soft bottom corners
@@ -88,6 +112,13 @@ def get_subtext_font(size=10):
     font = QFont("Segoe UI")
     font.setPointSizeF(float(size))
     font.setWeight(QFont.Weight.Normal)
+    return _apply_smooth(font)
+
+def get_monospaced_font(size=12):
+    font = QFont("Consolas")
+    font.setPointSizeF(float(size))
+    font.setWeight(QFont.Weight.Bold)
+    font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
     return _apply_smooth(font)
 
 # Modern Curvy Dark Glass QSS Stylesheet

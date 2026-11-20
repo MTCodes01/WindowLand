@@ -365,7 +365,18 @@ class PhoneBridgeHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0].rstrip("/")
 
-        if path in ("/api/notify", "/api/notification", "/notify", "/message"):
+        if path in ("/api/wake", "/wake"):
+            if self.server_ref:
+                self.server_ref.wake_requested.emit()
+            res = json.dumps({"status": "ok", "action": "woken"}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(res)))
+            self._send_cors_headers()
+            self.end_headers()
+            self.wfile.write(res)
+
+        elif path in ("/api/notify", "/api/notification", "/notify", "/message"):
             content_length = int(self.headers.get("Content-Length", 0))
             post_data = self.rfile.read(content_length)
 

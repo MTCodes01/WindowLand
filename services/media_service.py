@@ -116,6 +116,9 @@ class MediaService(QObject):
     def previous_track(self):
         self._command_queue.put(("PREV", None))
 
+    def seek(self, position_seconds: float):
+        self._command_queue.put(("SEEK", position_seconds))
+
     def set_mock_mode(self, enabled: bool):
         self._command_queue.put(("SET_MOCK", enabled))
 
@@ -156,6 +159,8 @@ class MediaService(QObject):
                         await self._handle_next(manager)
                     elif cmd == "PREV":
                         await self._handle_prev(manager)
+                    elif cmd == "SEEK":
+                        await self._handle_seek(manager, arg)
                 except queue.Empty:
                     break
                 except Exception:
@@ -349,6 +354,26 @@ class MediaService(QObject):
             self._mock_mode = True
             self._mock_index = (self._mock_index - 1) % len(MOCK_PLAYLIST)
             self._mock_position = 0
+            self._emit_mock_state()
+
+    async def _handle_seek(self, manager, pos_sec: float):
+        if self._mock_mode or manager is None:
+            self._mock_position = max(0, int(pos_sec))
+            self._emit_mock_state()
+            return
+
+        try:
+            cur = manager.get_current_session()
+            if cur:
+                ticks = int(pos_sec * 10_000_000)
+                await cur.try_change_playback_position_async(ticks)
+                await asyncio.sleep(0.1)
+                await self._poll_windows_media(manager)
+            else:
+                self._mock_position = max(0, int(pos_sec))
+                self._emit_mock_state()
+        except Exception:
+            self._mock_position = max(0, int(pos_sec))
             self._emit_mock_state()
 
     def _emit_mock_state(self):

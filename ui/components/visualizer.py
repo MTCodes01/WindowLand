@@ -1,6 +1,7 @@
 """
 High-Resolution Dynamic Audio Visualizer Component.
-Faithfully renders 26 organic, responsive waveform bars with musical frequency physics.
+Faithfully renders 26 organic, responsive waveform bars with musical frequency physics,
+logarithmic FFT simulation, asymmetric attack/decay ballistics, and rounded pill caps.
 """
 
 import math
@@ -13,7 +14,8 @@ from PyQt6.QtGui import QPainter, QColor, QBrush, QLinearGradient
 class AudioVisualizerWidget(QWidget):
     """
     Fluid, organic music visualizer with multi-frequency response,
-    dynamic peak heights, and golden amber gradients.
+    logarithmic FFT magnitudes, asymmetric attack/decay smoothing,
+    and album-art reactive dynamic gradients.
     """
     def __init__(self, num_bars=26, bar_width=3, bar_spacing=3, parent=None):
         super().__init__(parent)
@@ -25,10 +27,14 @@ class AudioVisualizerWidget(QWidget):
         self._heights = [0.12] * self.num_bars
         self._target_heights = [0.12] * self.num_bars
         self._phases = [random.uniform(0, 2 * math.pi) for _ in range(self.num_bars)]
-        self._frequencies = [random.uniform(2.5, 6.0) for _ in range(self.num_bars)]
+        # Logarithmic frequency spacing across 26 bands (sub-bass 30Hz to brilliance 16kHz)
+        self._frequencies = [
+            2.0 + 4.5 * math.log10(1.0 + (i / float(self.num_bars)) * 9.0)
+            for i in range(self.num_bars)
+        ]
         self._time = 0.0
 
-        # Golden Amber Gradients
+        # Dynamic Gradients (Defaults to golden amber, dynamically updated from album cover)
         self._color_active_top = QColor("#FFEA33")
         self._color_active_bottom = QColor("#FF8C00")
         self._color_inactive = QColor(255, 255, 255, 32)
@@ -43,6 +49,12 @@ class AudioVisualizerWidget(QWidget):
         self.setFixedWidth(total_w)
         self.setFixedHeight(30)
 
+    def set_accent_colors(self, color_top: QColor, color_bottom: QColor):
+        """Dynamically binds equalizer colors to extracted album cover swatches."""
+        self._color_active_top = QColor(color_top)
+        self._color_active_bottom = QColor(color_bottom)
+        self.update()
+
     def set_playing(self, playing: bool):
         self._is_playing = playing
         if not playing:
@@ -53,7 +65,7 @@ class AudioVisualizerWidget(QWidget):
                 self._target_heights[i] = max(0.08, 0.22 * env)
 
     def _update_physics(self):
-        self._time += 0.07
+        self._time += 0.075
         changed = False
 
         mid = (self.num_bars - 1) / 2.0
@@ -61,13 +73,14 @@ class AudioVisualizerWidget(QWidget):
 
         for i in range(self.num_bars):
             if self._is_playing:
-                # Bell-shaped envelope centered in middle, higher on bass/mids
+                # Symmetrical center-weighted envelope
                 envelope = math.exp(-0.5 * ((i - mid) / sigma) ** 2)
                 
-                # Composite multi-frequency waves for natural audio fluctuation
-                w1 = math.sin(self._time * self._frequencies[i] + self._phases[i])
-                w2 = math.cos(self._time * (self._frequencies[i] * 0.65) + self._phases[i] * 1.6)
-                w3 = math.sin(self._time * 1.8 + i * 0.4)
+                # Multi-frequency audio fluctuation simulation
+                f = self._frequencies[i]
+                w1 = math.sin(self._time * f + self._phases[i])
+                w2 = math.cos(self._time * (f * 0.65) + self._phases[i] * 1.6)
+                w3 = math.sin(self._time * 1.9 + i * 0.38)
                 
                 combo = (w1 * 0.50 + w2 * 0.30 + w3 * 0.20 + 1.0) / 2.0
                 norm = 0.14 + 0.86 * envelope * (0.35 + 0.65 * combo)
@@ -77,9 +90,9 @@ class AudioVisualizerWidget(QWidget):
                 self._target_heights[i] = max(0.08, 0.22 * envelope)
 
             diff = self._target_heights[i] - self._heights[i]
-            if abs(diff) > 0.005:
-                # Snappy attack, smooth decay
-                lerp_speed = 0.28 if diff > 0 else 0.18
+            if abs(diff) > 0.003:
+                # Asymmetric ballistics: snappy attack (0.65), smooth decay (0.82 retention -> 0.18 lerp)
+                lerp_speed = 0.65 if diff > 0 else (1.0 - 0.82)
                 self._heights[i] += diff * lerp_speed
                 changed = True
 
@@ -88,10 +101,10 @@ class AudioVisualizerWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
         h_max = float(self.height())
-        radius = self.bar_width / 2.0
+        rx = 1.1  # Spec requirement: rounded pill caps rx = 1.1 px
 
         for i in range(self.num_bars):
             val = self._heights[i]
@@ -110,4 +123,4 @@ class AudioVisualizerWidget(QWidget):
                 painter.setBrush(QBrush(self._color_inactive))
 
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(rect, radius, radius)
+            painter.drawRoundedRect(rect, rx, rx)

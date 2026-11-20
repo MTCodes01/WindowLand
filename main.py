@@ -34,7 +34,7 @@ if _kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
     # 1. Wake up running instance via local phone bridge HTTP endpoint (<10ms)
     try:
         import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:54321/api/wake", data=b"{}", headers={"Content-Type": "application/json"})
+        req = urllib.request.Request("http://127.0.0.1:54321/api/wake")
         urllib.request.urlopen(req, timeout=1.0)
     except Exception:
         pass
@@ -78,11 +78,7 @@ class AppNativeEventFilter(QAbstractNativeEventFilter):
                     self.tray_icon.show()
                 elif msg.message == self.wm_show_island:
                     # User clicked app or launched again: reveal Dynamic Island!
-                    if not self.island.isVisible():
-                        self.island.show()
-                    self.island.raise_()
-                    self.island.set_glow_state("notification", duration_sec=3.0)
-                    self.island.set_island_state("expanded")
+                    self.island.wake_up()
             except Exception:
                 pass
         return False, 0
@@ -163,15 +159,35 @@ def main():
     system_service.start()
     device_service.start()
 
-    # Wire phone notifications and remote wakeups to Dynamic Island
-    phone_service.notification_received.connect(
-        lambda data: island.trigger_toast(data["app"], data["title"], data["message"])
-    )
-    phone_service.wake_requested.connect(
-        lambda: (island.show(), island.raise_(), island.set_glow_state("notification", duration_sec=3.0), island.set_island_state("expanded"))
-    )
+    # Wire phone notifications and remote wakeups to Dynamic Island with smart state routing
+    import re
+
+    def on_phone_notification(data: dict):
+        app = data.get("app", "")
+        title = data.get("title", "")
+        msg = data.get("message", "")
+        phone_type = data.get("phone", "iPhone")
+
+        # 1. Incoming Call Detection -> call_live state (Spec 3.2)
+        if "call" in app.lower() or "call" in title.lower() or "incoming" in msg.lower():
+            caller = title if title and "call" not in title.lower() else (msg.split(" ")[0] if msg else "Mom")
+            island.trigger_call(name=caller, number="", status=f"{phone_type} • Incoming Call")
+            return
+
+        # 2. 2FA Verification Code Detection -> otp_pill state (Spec 3.3)
+        code_match = re.search(r'\b\d{3}[ -]\d{3}\b', msg) or re.search(r'\b\d{4,8}\b', msg)
+        if ("otp" in msg.lower() or "code" in msg.lower() or "verification" in msg.lower() or "2fa" in msg.lower() or "code" in title.lower()) and code_match:
+            clean_app = app.replace("📱", "").strip() or "Messages"
+            island.trigger_otp(code=code_match.group(0), app=clean_app)
+            return
+
+        # 3. Default Notification Toast
+        island.trigger_toast(app, title, msg)
+
+    phone_service.notification_received.connect(on_phone_notification)
+    phone_service.wake_requested.connect(island.wake_up)
     phone_service.device_paired.connect(
-        lambda d: island.set_glow_state("success", duration_sec=3.0)
+        lambda d: (island.set_phone_battery(84), island.set_glow_state("success", duration_sec=3.0))
     )
     phone_service.start()
 
@@ -270,6 +286,12 @@ def main():
 
     tray_menu.addSeparator()
 
+    act_autohide = QAction("👁  Smart Auto-Hide Notch", tray_menu)
+    act_autohide.setCheckable(True)
+    act_autohide.setChecked(False)
+    act_autohide.toggled.connect(island.toggle_auto_hide)
+    tray_menu.addAction(act_autohide)
+
     act_autostart = QAction("🚀  Start with Windows", tray_menu)
     act_autostart.setCheckable(True)
     act_autostart.setChecked(is_autostart_enabled())
@@ -288,7 +310,35 @@ def main():
     ))
     menu_sim.addAction(act_test_toast)
 
-    act_sim_phone = QAction("📱 Test Phone Notification (WhatsApp)", menu_sim)
+    act_sim_osd = QAction("🔊 Test OSD HUD (Volume 72%)", menu_sim)
+    act_sim_osd.triggered.connect(lambda: island.trigger_osd("🔊", 0.72, "72%", "volume"))
+    menu_sim.addAction(act_sim_osd)
+
+    act_sim_call = QAction("📞 Test Live Call (Incoming Mom)", menu_sim)
+    act_sim_call.triggered.connect(lambda: island.trigger_call("Mom", "+1 (555) 234-5678", "iPhone • Incoming Call"))
+    menu_sim.addAction(act_sim_call)
+
+    act_sim_otp = QAction("💬 Test 2FA OTP Code (482 910)", menu_sim)
+    act_sim_otp.triggered.connect(lambda: island.trigger_otp("482 910", "Messages"))
+    menu_sim.addAction(act_sim_otp)
+
+    act_sim_shelf = QAction("📁 Test File Shelf (Drag & Drop Tray)", menu_sim)
+    act_sim_shelf.triggered.connect(island.trigger_file_shelf)
+    menu_sim.addAction(act_sim_shelf)
+
+    act_sim_dl = QAction("📥 Test Download Progress (75% Hairline)", menu_sim)
+    act_sim_dl.triggered.connect(lambda: island.set_download_progress(0.75))
+    menu_sim.addAction(act_sim_dl)
+
+    act_sim_phone_batt = QAction("📱 Test Phone Battery (84%)", menu_sim)
+    act_sim_phone_batt.triggered.connect(lambda: island.set_phone_battery(84))
+    menu_sim.addAction(act_sim_phone_batt)
+
+    act_sim_leds = QAction("🟢 Test Privacy LEDs (Mic & Cam)", menu_sim)
+    act_sim_leds.triggered.connect(lambda: island.set_privacy_leds(mic=True, cam=True))
+    menu_sim.addAction(act_sim_leds)
+
+    act_sim_phone = QAction("📱 Test Phone Message (WhatsApp)", menu_sim)
     act_sim_phone.triggered.connect(lambda: island.trigger_toast(
         "📱 WHATSAPP", "Sarah Jenkins (iPhone)", "Hey! Are you joining the design sync now?"
     ))
