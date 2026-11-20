@@ -229,8 +229,29 @@ def main():
     act_toggle.triggered.connect(island.toggle_expanded)
     tray_menu.addAction(act_toggle)
 
+    menu_dock = tray_menu.addMenu("📍  Dock Position")
+    def set_dock(edge: str):
+        island._dock_edge = edge
+        island._target_morph = 1.0 if edge != "floating" else 0.0
+        island._dock_ratio_x = 0.5
+        island._dock_ratio_y = 0.5
+        island._apply_geometry_for_state(island._island_state, animate=True)
+        island.update()
+
+    act_dock_top = QAction("⬆  Top Bezel (Default)", menu_dock)
+    act_dock_top.triggered.connect(lambda: set_dock("top"))
+    menu_dock.addAction(act_dock_top)
+
+    act_dock_bottom = QAction("⬇  Bottom Taskbar Edge", menu_dock)
+    act_dock_bottom.triggered.connect(lambda: set_dock("bottom"))
+    menu_dock.addAction(act_dock_bottom)
+
+    act_dock_floating = QAction("⚬  Float Freely Anywhere", menu_dock)
+    act_dock_floating.triggered.connect(lambda: set_dock("floating"))
+    menu_dock.addAction(act_dock_floating)
+
     act_center = QAction("⊙  Recenter Notch", tray_menu)
-    act_center.triggered.connect(lambda: island._apply_geometry_for_state(island._island_state, animate=True))
+    act_center.triggered.connect(lambda: set_dock("top"))
     tray_menu.addAction(act_center)
 
     tray_menu.addSeparator()

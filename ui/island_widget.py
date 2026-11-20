@@ -239,6 +239,19 @@ class DynamicIslandWidget(QWidget):
         self._island_state = "compact"
         self._glow_state = "idle"
 
+        # Liquid Edge Docking & Dragging Physics
+        self._dock_edge = "top"          # "top", "bottom", "left", "right", "floating"
+        self._dock_morph = 1.0           # 1.0 = fully notched ears, 0.0 = pure liquid floating capsule
+        self._target_morph = 1.0
+        self._dock_ratio_x = 0.5         # Horizontal center ratio along screen (0.0 to 1.0)
+        self._dock_ratio_y = 0.5         # Vertical center ratio along screen (0.0 to 1.0)
+        self._is_dragging = False
+        self._drag_start_global = None
+        self._drag_start_pos = None
+        self._drag_last_pos = None
+        self._liquid_vx = 0.0            # Fluid drag velocity x
+        self._liquid_vy = 0.0            # Fluid drag velocity y
+
         # Device Connection Pop-up Cache & Auto-Dismiss Timer (Native Dynamic Island Pop-up)
         self._device_info: Dict[str, Any] = {}
         self._device_pixmaps: Dict[str, QPixmap] = {}
@@ -440,8 +453,9 @@ class DynamicIslandWidget(QWidget):
         self.setMouseTracking(True)
 
     def _get_target_rect(self, state: str) -> tuple[int, int, int, int]:
-        screen = QGuiApplication.primaryScreen()
-        screen_geo = screen.geometry() if screen else QRectF(0, 0, 1920, 1080)
+        cur_center = self.geometry().center()
+        screen = QGuiApplication.screenAt(cur_center) or QGuiApplication.primaryScreen()
+        screen_geo = screen.geometry() if screen else QRectF(0, 0, 1920, 1080).toRect()
 
         if state == "compact":
             if self._is_music_active() or self._media_info.get("has_media", False):
@@ -459,8 +473,41 @@ class DynamicIslandWidget(QWidget):
             w = EXPANDED_WIDTH
             h = EXPANDED_HEIGHT
 
-        x = int(screen_geo.x() + (screen_geo.width() - w) / 2)
-        y = int(screen_geo.y())
+        edge = getattr(self, "_dock_edge", "top")
+        ratio_x = getattr(self, "_dock_ratio_x", 0.5)
+        ratio_y = getattr(self, "_dock_ratio_y", 0.5)
+
+        if edge == "top":
+            center_x = screen_geo.x() + screen_geo.width() * ratio_x
+            x = int(center_x - w / 2)
+            x = max(int(screen_geo.left()), min(int(screen_geo.right() - w), x))
+            y = int(screen_geo.top())
+
+        elif edge == "bottom":
+            center_x = screen_geo.x() + screen_geo.width() * ratio_x
+            x = int(center_x - w / 2)
+            x = max(int(screen_geo.left()), min(int(screen_geo.right() - w), x))
+            y = int(screen_geo.bottom() - h + 1)
+
+        elif edge == "left":
+            x = int(screen_geo.left())
+            center_y = screen_geo.y() + screen_geo.height() * ratio_y
+            y = int(center_y - h / 2)
+            y = max(int(screen_geo.top()), min(int(screen_geo.bottom() - h), y))
+
+        elif edge == "right":
+            x = int(screen_geo.right() - w + 1)
+            center_y = screen_geo.y() + screen_geo.height() * ratio_y
+            y = int(center_y - h / 2)
+            y = max(int(screen_geo.top()), min(int(screen_geo.bottom() - h), y))
+
+        else:  # floating
+            old_center = getattr(self, "_floating_center", cur_center)
+            x = int(old_center.x() - w / 2)
+            y = int(old_center.y() - h / 2)
+            x = max(int(screen_geo.left() + 10), min(int(screen_geo.right() - w - 10), x))
+            y = max(int(screen_geo.top() + 10), min(int(screen_geo.bottom() - h - 10), y))
+
         return x, y, w, h
 
     def _apply_geometry_for_state(self, state: str, animate=True):
@@ -477,11 +524,11 @@ class DynamicIslandWidget(QWidget):
         self._geo_animation = QPropertyAnimation(self, b"geometry")
 
         if state in ("expanded", "device_popup"):
-            self._geo_animation.setDuration(320)
+            self._geo_animation.setDuration(340)
             self._geo_animation.setEasingCurve(QEasingCurve.Type.OutBack)
         else:
-            self._geo_animation.setDuration(260)
-            self._geo_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._geo_animation.setDuration(280)
+            self._geo_animation.setEasingCurve(QEasingCurve.Type.OutBack)
 
         self._geo_animation.setStartValue(self.geometry())
         self._geo_animation.setEndValue(QRectF(x, y, w, h).toRect())
@@ -497,10 +544,15 @@ class DynamicIslandWidget(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        edge = getattr(self, "_dock_edge", "top")
+        m_top = int(NOTCH_RADIUS_TOP + 4) if edge == "top" else 8
+        m_bot = int(NOTCH_RADIUS_TOP + 4) if edge == "bottom" else 8
+        m_left = int(NOTCH_RADIUS_TOP + 4) if edge == "left" else 14
+        m_right = int(NOTCH_RADIUS_TOP + 4) if edge == "right" else 14
         self.dashboard_container.setGeometry(
-            int(NOTCH_RADIUS_TOP + 4), 6,
-            max(10, self.width() - int(2 * NOTCH_RADIUS_TOP + 8)),
-            max(10, self.height() - 12)
+            m_left, m_top,
+            max(10, self.width() - m_left - m_right),
+            max(10, self.height() - m_top - m_bot)
         )
 
     def changeEvent(self, event):
@@ -979,6 +1031,17 @@ class DynamicIslandWidget(QWidget):
             self._mini_eq_heights[2] = 0.25 + 0.75 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
             self._mini_eq_heights[3] = 0.2 + 0.6 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
 
+        # Liquid morphing interpolation (lerp factor 0.18 for viscous fluid morphing)
+        lerp_morph = 0.18
+        old_morph = self._dock_morph
+        self._dock_morph += (self._target_morph - self._dock_morph) * lerp_morph
+        if abs(self._dock_morph - old_morph) > 0.001:
+            self.update()
+
+        # Fluid velocity dampening
+        self._liquid_vx *= 0.82
+        self._liquid_vy *= 0.82
+
         self.update()
 
     def _on_ticker_tick(self):
@@ -989,18 +1052,78 @@ class DynamicIslandWidget(QWidget):
             self.update()
 
     # -------------------------------------------------------------
-    # Mouse Interaction
+    # Mouse Interaction: Liquid Drag-and-Drop & Morphing
     # -------------------------------------------------------------
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            if self._island_state == "device_popup":
-                self.collapse_to_compact()
-                return
-            elif self._island_state in ("compact", "toast"):
-                self.set_island_state("expanded")
+            self._drag_start_global = event.globalPosition().toPoint()
+            self._drag_start_pos = self.pos()
+            self._drag_last_pos = event.globalPosition().toPoint()
+            self._is_dragging = False
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        # 1. Fluid Drag & Edge Snapping
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_start_global is not None:
+            cur_pt = event.globalPosition().toPoint()
+            delta = cur_pt - self._drag_start_global
+            dist = delta.manhattanLength()
+
+            if not self._is_dragging and dist >= 5:
+                self._is_dragging = True
+                self.setCursor(QCursor(Qt.CursorShape.ClosedHandCursor))
+
+            if self._is_dragging:
+                last_pt = getattr(self, "_drag_last_pos", cur_pt)
+                vx = float(cur_pt.x() - last_pt.x())
+                vy = float(cur_pt.y() - last_pt.y())
+                self._liquid_vx = self._liquid_vx * 0.7 + vx * 0.3
+                self._liquid_vy = self._liquid_vy * 0.7 + vy * 0.3
+                self._drag_last_pos = cur_pt
+
+                screen = QGuiApplication.screenAt(cur_pt) or QGuiApplication.primaryScreen()
+                s_geo = screen.geometry() if screen else QRectF(0, 0, 1920, 1080).toRect()
+
+                raw_x = self._drag_start_pos.x() + delta.x()
+                raw_y = self._drag_start_pos.y() + delta.y()
+                w = self.width()
+                h = self.height()
+
+                d_top = abs(raw_y - s_geo.top())
+                d_bot = abs(s_geo.bottom() - (raw_y + h))
+                d_left = abs(raw_x - s_geo.left())
+                d_right = abs(s_geo.right() - (raw_x + w))
+
+                SNAP_DIST = 52
+                min_d = min(d_top, d_bot, d_left, d_right)
+
+                if min_d <= SNAP_DIST:
+                    if min_d == d_top:
+                        target_edge = "top"
+                        raw_y = s_geo.top()
+                    elif min_d == d_bot:
+                        target_edge = "bottom"
+                        raw_y = s_geo.bottom() - h + 1
+                    elif min_d == d_left:
+                        target_edge = "left"
+                        raw_x = s_geo.left()
+                    else:
+                        target_edge = "right"
+                        raw_x = s_geo.right() - w + 1
+                    self._target_morph = 1.0
+                else:
+                    target_edge = "floating"
+                    self._target_morph = 0.0
+
+                if self._dock_edge != target_edge:
+                    self._dock_edge = target_edge
+
+                self.move(int(raw_x), int(raw_y))
+                self._floating_center = self.geometry().center()
+                self.update()
+                return
+
+        # 2. Device pop-up interactions
         if self._island_state == "device_popup":
             pos = event.position()
             old_d = getattr(self, "_device_done_hovered", False)
@@ -1018,15 +1141,56 @@ class DynamicIslandWidget(QWidget):
                 self.update()
             if self._device_done_hovered or self._device_close_hovered:
                 self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            else:
+            elif not self._is_dragging:
                 self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+        elif self._island_state == "compact" and not self._is_dragging:
+            self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+
         super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._is_dragging:
+                self._is_dragging = False
+                self._drag_start_global = None
+
+                screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
+                s_geo = screen.geometry() if screen else QRectF(0, 0, 1920, 1080).toRect()
+                w = self.width()
+                h = self.height()
+
+                if self._dock_edge in ("top", "bottom"):
+                    self._dock_ratio_x = max(0.08, min(0.92, (self.x() + w / 2.0 - s_geo.left()) / s_geo.width()))
+                elif self._dock_edge in ("left", "right"):
+                    self._dock_ratio_y = max(0.08, min(0.92, (self.y() + h / 2.0 - s_geo.top()) / s_geo.height()))
+                else:
+                    self._floating_center = self.geometry().center()
+
+                # Settle cleanly into docked position with liquid spring easing
+                self._apply_geometry_for_state(self._island_state, animate=True)
+                if self._island_state == "compact":
+                    self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
+                else:
+                    self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+                self.update()
+                return
+
+            self._drag_start_global = None
+            if self._island_state == "device_popup":
+                self.collapse_to_compact()
+                return
+            elif self._island_state in ("compact", "toast"):
+                self.set_island_state("expanded")
+        super().mouseReleaseEvent(event)
 
     # -------------------------------------------------------------
     # Organic Curvy Hardware Notch Path Generator
     # -------------------------------------------------------------
     def _create_notch_path(self, w: float, h: float) -> QPainterPath:
-        r_top = NOTCH_RADIUS_TOP
+        morph = getattr(self, "_dock_morph", 1.0)
+        edge = getattr(self, "_dock_edge", "top")
+
+        r_ear = NOTCH_RADIUS_TOP * max(0.0, min(1.0, morph))
         if self._island_state == "compact":
             r_bot = NOTCH_RADIUS_BOT
         elif self._island_state == "device_popup":
@@ -1035,15 +1199,71 @@ class DynamicIslandWidget(QWidget):
             r_bot = EXPANDED_RADIUS
 
         path = QPainterPath()
-        path.moveTo(0, 0)
-        path.cubicTo(r_top * 0.4, 0, r_top, r_top * 0.4, r_top, r_top)
-        path.lineTo(r_top, h - r_bot)
-        path.quadTo(r_top, h, r_top + r_bot, h)
-        path.lineTo(w - r_top - r_bot, h)
-        path.quadTo(w - r_top, h, w - r_top, h - r_bot)
-        path.lineTo(w - r_top, r_top)
-        path.cubicTo(w - r_top, r_top * 0.4, w - r_top * 0.4, 0, w, 0)
-        path.lineTo(0, 0)
+
+        if edge == "top":
+            if r_ear > 0.5:
+                path.moveTo(0, 0)
+                path.cubicTo(r_ear * 0.4, 0, r_ear, r_ear * 0.4, r_ear, r_ear)
+                path.lineTo(r_ear, h - r_bot)
+                path.quadTo(r_ear, h, r_ear + r_bot, h)
+                path.lineTo(w - r_ear - r_bot, h)
+                path.quadTo(w - r_ear, h, w - r_ear, h - r_bot)
+                path.lineTo(w - r_ear, r_ear)
+                path.cubicTo(w - r_ear, r_ear * 0.4, w - r_ear * 0.4, 0, w, 0)
+                path.lineTo(0, 0)
+            else:
+                r = min(h / 2.0, 22.0)
+                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        elif edge == "bottom":
+            if r_ear > 0.5:
+                path.moveTo(0, h)
+                path.cubicTo(r_ear * 0.4, h, r_ear, h - r_ear * 0.4, r_ear, h - r_ear)
+                path.lineTo(r_ear, r_bot)
+                path.quadTo(r_ear, 0, r_ear + r_bot, 0)
+                path.lineTo(w - r_ear - r_bot, 0)
+                path.quadTo(w - r_ear, 0, w - r_ear, r_bot)
+                path.lineTo(w - r_ear, h - r_ear)
+                path.cubicTo(w - r_ear, h - r_ear * 0.4, w - r_ear * 0.4, h, w, h)
+                path.lineTo(0, h)
+            else:
+                r = min(h / 2.0, 22.0)
+                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        elif edge == "left":
+            if r_ear > 0.5:
+                path.moveTo(0, 0)
+                path.cubicTo(0, r_ear * 0.4, r_ear * 0.4, r_ear, r_ear, r_ear)
+                path.lineTo(w - r_bot, r_ear)
+                path.quadTo(w, r_ear, w, r_ear + r_bot)
+                path.lineTo(w, h - r_ear - r_bot)
+                path.quadTo(w, h - r_ear, w - r_bot, h - r_ear)
+                path.lineTo(r_ear, h - r_ear)
+                path.cubicTo(r_ear * 0.4, h - r_ear, 0, h - r_ear * 0.4, 0, h)
+                path.lineTo(0, 0)
+            else:
+                r = min(h / 2.0, 22.0)
+                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        elif edge == "right":
+            if r_ear > 0.5:
+                path.moveTo(w, 0)
+                path.cubicTo(w, r_ear * 0.4, w - r_ear * 0.4, r_ear, w - r_ear, r_ear)
+                path.lineTo(r_bot, r_ear)
+                path.quadTo(0, r_ear, 0, r_ear + r_bot)
+                path.lineTo(0, h - r_ear - r_bot)
+                path.quadTo(0, h - r_ear, r_bot, h - r_ear)
+                path.lineTo(w - r_ear, h - r_ear)
+                path.cubicTo(w - r_ear * 0.4, h - r_ear, w, h - r_ear * 0.4, w, h)
+                path.lineTo(w, 0)
+            else:
+                r = min(h / 2.0, 22.0)
+                path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+
+        else:  # "floating" pure liquid capsule
+            r = min(h / 2.0, 22.0)
+            path.addRoundedRect(QRectF(0, 0, w, h), r, r)
+
         path.closeSubpath()
         return path
 
@@ -1097,16 +1317,31 @@ class DynamicIslandWidget(QWidget):
         sheen_grad.setColorAt(0.70, QColor(255, 255, 255, 0))
         painter.fillRect(QRectF(0, 0, w, h), sheen_grad)
 
-        # Top specular meniscus along curved top rim
-        r_top = NOTCH_RADIUS_TOP
-        meniscus_grad = QLinearGradient(0, 0, w, 0)
-        meniscus_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
-        meniscus_grad.setColorAt(r_top / w, QColor(255, 255, 255, 45))
-        meniscus_grad.setColorAt(0.5, QColor(255, 255, 255, 130 if self._hovered else 85))
-        meniscus_grad.setColorAt((w - r_top) / w, QColor(255, 255, 255, 45))
-        meniscus_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.setPen(QPen(QBrush(meniscus_grad), 1.5))
-        painter.drawLine(QPointF(0, 0.75), QPointF(w, 0.75))
+        # Top/Edge specular meniscus along docked bezel rim
+        edge = getattr(self, "_dock_edge", "top")
+        morph = getattr(self, "_dock_morph", 1.0)
+
+        if edge == "top" and morph > 0.15:
+            r_top = NOTCH_RADIUS_TOP * morph
+            meniscus_grad = QLinearGradient(0, 0, w, 0)
+            meniscus_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+            meniscus_grad.setColorAt(r_top / w, QColor(255, 255, 255, int(45 * morph)))
+            meniscus_grad.setColorAt(0.5, QColor(255, 255, 255, int((130 if self._hovered else 85) * morph)))
+            meniscus_grad.setColorAt((w - r_top) / w, QColor(255, 255, 255, int(45 * morph)))
+            meniscus_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setPen(QPen(QBrush(meniscus_grad), 1.5))
+            painter.drawLine(QPointF(0, 0.75), QPointF(w, 0.75))
+
+        elif edge == "bottom" and morph > 0.15:
+            r_top = NOTCH_RADIUS_TOP * morph
+            meniscus_grad = QLinearGradient(0, h, w, h)
+            meniscus_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+            meniscus_grad.setColorAt(r_top / w, QColor(255, 255, 255, int(45 * morph)))
+            meniscus_grad.setColorAt(0.5, QColor(255, 255, 255, int((130 if self._hovered else 85) * morph)))
+            meniscus_grad.setColorAt((w - r_top) / w, QColor(255, 255, 255, int(45 * morph)))
+            meniscus_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setPen(QPen(QBrush(meniscus_grad), 1.5))
+            painter.drawLine(QPointF(0, h - 0.75), QPointF(w, h - 0.75))
 
         # 5. Animated Moving Gradient Effect (Dual-Vortex Liquid Aurora)
         self._paint_moving_gradient(painter, w, h)
