@@ -15,7 +15,7 @@ import time
 import datetime
 import threading
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QGuiApplication
@@ -27,6 +27,13 @@ try:
     HAS_PYCAW = True
 except Exception:
     HAS_PYCAW = False
+
+# High-resolution WASAPI loopback spectrum engine
+try:
+    from services.audio_spectrum import AudioSpectrumEngine
+    HAS_SPECTRUM_ENGINE = True
+except Exception:
+    HAS_SPECTRUM_ENGINE = False
 
 # Battery via psutil
 try:
@@ -67,6 +74,7 @@ class SystemService(QObject):
         self._reminders: List[Dict[str, Any]] = []
         self._alerted_reminder_ids = set()
         self._seen_notification_ids = set()
+        self._spectrum_engine = AudioSpectrumEngine(22) if HAS_SPECTRUM_ENGINE else None
 
         self._load_reminders()
 
@@ -95,12 +103,16 @@ class SystemService(QObject):
         self._reminder_timer.start()
         self._battery_timer.start()
         self._start_notification_listener()
+        if self._spectrum_engine:
+            self._spectrum_engine.start()
 
     def stop(self):
         self._clock_timer.stop()
         self._reminder_timer.stop()
         self._battery_timer.stop()
         self._listener_running = False
+        if self._spectrum_engine:
+            self._spectrum_engine.stop()
 
     def _on_clock_tick(self):
         now = datetime.datetime.now()
@@ -234,8 +246,24 @@ class SystemService(QObject):
         except Exception:
             return None
 
+    def get_audio_spectrum(self) -> Tuple[List[float], List[float]]:
+        """Returns (bands, peak_caps) from live 60 FPS WASAPI loopback FFT."""
+        if getattr(self, "_spectrum_engine", None):
+            return self._spectrum_engine.get_spectrum(), self._spectrum_engine.get_peak_caps()
+        return [0.0] * 22, [0.0] * 22
+
+    def get_bass_energy(self) -> float:
+        """Returns live sub-bass / kick drum transient energy [0.0 .. 1.0]."""
+        if getattr(self, "_spectrum_engine", None):
+            return self._spectrum_engine.get_bass()
+        return 0.0
+
     def get_audio_peak(self) -> float:
         """Returns live hardware master audio peak (0.0 to 1.0) with zero overhead."""
+        if getattr(self, "_spectrum_engine", None):
+            peak = self._spectrum_engine.get_peak()
+            if peak > 0.001:
+                return peak
         if not HAS_PYCAW:
             return 0.0
         try:

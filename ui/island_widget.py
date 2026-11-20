@@ -1205,6 +1205,7 @@ class DynamicIslandWidget(QWidget):
         self.visualizer = AudioVisualizerWidget(num_bars=22, bar_width=2.5, bar_spacing=2.5, parent=self.dashboard_container)
         self.visualizer.setFixedHeight(28)
         if hasattr(self, "system_service"):
+            self.visualizer.set_spectrum_provider(self.system_service.get_audio_spectrum)
             self.visualizer.set_peak_provider(self.system_service.get_audio_peak)
         track_row.addWidget(self.visualizer, alignment=Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
 
@@ -1481,41 +1482,38 @@ class DynamicIslandWidget(QWidget):
         self._current_glow_opacity += (self._target_glow_opacity - self._current_glow_opacity) * lerp_factor
 
         if self._island_state == "compact" and self._media_info.get("is_playing", False):
-            peak = 0.0
+            has_real_bands = False
             if hasattr(self, "system_service"):
                 try:
-                    peak = self.system_service.get_audio_peak()
+                    bands, _ = self.system_service.get_audio_spectrum()
+                    if bands and len(bands) >= 22 and max(bands) > 0.005:
+                        has_real_bands = True
+                        # Real hardware multi-band frequency mapping:
+                        b0 = max(bands[0:5])    # Sub-bass / Kick
+                        b1 = max(bands[5:10])   # Low-mids / Bass
+                        b2 = max(bands[10:16])  # High-mids / Vocals
+                        b3 = max(bands[16:22])  # Treble / Air
+                        
+                        targets = [
+                            max(0.18, min(1.0, 0.12 + b0 * 0.88)),
+                            max(0.18, min(1.0, 0.12 + b1 * 0.88)),
+                            max(0.18, min(1.0, 0.12 + b2 * 0.88)),
+                            max(0.18, min(1.0, 0.12 + b3 * 0.88))
+                        ]
+                        for idx in range(4):
+                            t = targets[idx]
+                            lerp_spd = 0.82 if t > self._mini_eq_heights[idx] else 0.22
+                            self._mini_eq_heights[idx] += (t - self._mini_eq_heights[idx]) * lerp_spd
                 except Exception:
-                    peak = 0.0
-            
-            if not hasattr(self, "_mini_eq_beat"):
-                self._mini_eq_beat = 0.0
+                    has_real_bands = False
 
-            # Instant kick / transient detector for mini-EQ
-            delta = max(0.0, peak - self._mini_eq_peak)
-            if delta > 0.012:
-                self._mini_eq_beat = min(1.0, self._mini_eq_beat + delta * 9.0)
-            else:
-                self._mini_eq_beat *= 0.85
-
-            if peak > self._mini_eq_peak:
-                self._mini_eq_peak += (peak - self._mini_eq_peak) * 0.55
-            else:
-                self._mini_eq_peak += (peak - self._mini_eq_peak) * 0.14
-
-            pace = 0.14 + self._mini_eq_beat * 0.16
-            self._mini_eq_phase += pace
-            amp = min(1.0, math.pow(self._mini_eq_peak, 0.35) * 1.75) if self._mini_eq_peak > 0.002 else 0.0
-            if amp > 0.02:
-                self._mini_eq_heights[0] = max(0.18, min(1.0, self._mini_eq_beat * 0.70 + amp * 0.55 * abs(math.sin(self._mini_eq_phase * 1.1))))
-                self._mini_eq_heights[1] = max(0.20, min(1.0, amp * (0.80 + 0.30 * abs(math.sin(self._mini_eq_phase * 1.6 + 0.7)))))
-                self._mini_eq_heights[2] = max(0.18, min(1.0, amp * (0.75 + 0.35 * abs(math.cos(self._mini_eq_phase * 1.3 + 1.4)))))
-                self._mini_eq_heights[3] = max(0.14, min(1.0, amp * (0.60 + 0.45 * abs(math.sin(self._mini_eq_phase * 1.9 + 2.1)))))
-            else:
-                self._mini_eq_heights[0] = 0.18 + 0.10 * abs(math.sin(self._mini_eq_phase))
-                self._mini_eq_heights[1] = 0.22 + 0.12 * abs(math.sin(self._mini_eq_phase * 1.3 + 1.0))
-                self._mini_eq_heights[2] = 0.20 + 0.11 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
-                self._mini_eq_heights[3] = 0.16 + 0.10 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
+            if not has_real_bands:
+                # Ambient fallback
+                self._mini_eq_phase += 0.15
+                self._mini_eq_heights[0] = 0.20 + 0.15 * abs(math.sin(self._mini_eq_phase))
+                self._mini_eq_heights[1] = 0.24 + 0.18 * abs(math.sin(self._mini_eq_phase * 1.3 + 1.0))
+                self._mini_eq_heights[2] = 0.22 + 0.16 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
+                self._mini_eq_heights[3] = 0.18 + 0.14 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
 
         # Liquid morphing interpolation (lerp factor 0.18 for viscous fluid morphing)
         lerp_morph = 0.18
@@ -2744,23 +2742,27 @@ class DynamicIslandWidget(QWidget):
         painter.setPen(QPen(QBrush(meniscus), 1.5))
         painter.drawLine(QPointF(0, 0.75), QPointF(w, 0.75))
 
-        # ── 4. Header: Frosted Close Button '✕' ─────────────────────
+        # ── 4. Header: Floating Sleek Vector Close Cross '✕' ─────────
+        close_size = 24.0
         close_x = w - r_top - 28.0
         close_y = 20.0
-        self._device_close_rect = QRectF(close_x, close_y, 26.0, 26.0)
+        self._device_close_rect = QRectF(close_x, close_y, close_size, close_size)
 
         is_close_hov = getattr(self, "_device_close_hovered", False)
-        close_bg = QColor(255, 255, 255, 36 if is_close_hov else 16)
-        close_border = QColor(255, 255, 255, 60 if is_close_hov else 28)
+        cross_path = QPainterPath()
+        arm = 4.4
+        ccx = close_x + close_size / 2.0
+        ccy = close_y + close_size / 2.0
+        cross_path.moveTo(ccx - arm, ccy - arm)
+        cross_path.lineTo(ccx + arm, ccy + arm)
+        cross_path.moveTo(ccx + arm, ccy - arm)
+        cross_path.lineTo(ccx - arm, ccy + arm)
 
-        painter.setPen(QPen(close_border, 1.0))
-        painter.setBrush(QBrush(close_bg))
-        painter.drawEllipse(self._device_close_rect)
-
-        f_close = get_display_font(9)
-        painter.setFont(f_close)
-        painter.setPen(QColor(255, 255, 255, 220 if is_close_hov else 160))
-        painter.drawText(self._device_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+        cross_alpha = 255 if is_close_hov else 140
+        cross_width = 1.8 if is_close_hov else 1.4
+        painter.setPen(QPen(QColor(255, 255, 255, cross_alpha), cross_width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(cross_path)
 
         # ── 5. Header: Clean Title & Connection Status ───────────────
         header_x = r_top + 18.0
@@ -2951,50 +2953,100 @@ class DynamicIslandWidget(QWidget):
     # -------------------------------------------------------------
     def _paint_osd_hud(self, painter: QPainter, w: float, h: float):
         """
-        Renders compact 220x36 liquid-glass OSD HUD for volume, brightness, caps.
+        Renders compact 260x38 liquid-glass OSD HUD for volume, brightness, caps.
+        Features vector speaker/brightness iconography, specular sheen, and smooth continuous fill slider.
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
-        glyph = self._osd_info.get("glyph", "🔊")
+        osd_type = self._osd_info.get("osd_type", "volume")
         val = max(0.0, min(1.0, float(self._osd_info.get("value", 0.5))))
         label = self._osd_info.get("label", f"{int(val * 100)}%")
 
-        # Left glyph icon
-        f_glyph = get_display_font(12)
-        painter.setFont(f_glyph)
-        painter.setPen(COLOR_TEXT_PRIMARY)
-        painter.drawText(QRectF(14.0, 0.0, 24.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignCenter, glyph)
+        # 1. Left clean vector icon
+        icon_cx = 28.0
+        icon_cy = h / 2.0
 
-        # Center fill bar with specular sheen
-        bar_x = 44.0
-        bar_w = w - bar_x - 52.0
-        bar_h = 6.0
+        painter.save()
+        if osd_type == "volume":
+            # Clean vector speaker
+            spk = QPainterPath()
+            spk.addRoundedRect(QRectF(icon_cx - 9.0, icon_cy - 3.5, 4.5, 7.0), 1.0, 1.0)
+            cone = QPainterPath()
+            cone.moveTo(icon_cx - 5.5, icon_cy - 3.5)
+            cone.lineTo(icon_cx - 1.0, icon_cy - 7.5)
+            cone.lineTo(icon_cx - 1.0, icon_cy + 7.5)
+            cone.lineTo(icon_cx - 5.5, icon_cy + 3.5)
+            cone.closeSubpath()
+            speaker_body = spk.united(cone)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 245)))
+            painter.drawPath(speaker_body)
+
+            # Sound wave arcs if volume > 0
+            if val > 0.01:
+                painter.setPen(QPen(QColor(255, 255, 255, 230), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                arc1 = QPainterPath()
+                arc1.arcMoveTo(QRectF(icon_cx - 4.0, icon_cy - 6.0, 12.0, 12.0), -45)
+                arc1.arcTo(QRectF(icon_cx - 4.0, icon_cy - 6.0, 12.0, 12.0), -45, 90)
+                painter.drawPath(arc1)
+
+                if val > 0.40:
+                    arc2 = QPainterPath()
+                    arc2.arcMoveTo(QRectF(icon_cx - 6.0, icon_cy - 9.5, 19.0, 19.0), -40)
+                    arc2.arcTo(QRectF(icon_cx - 6.0, icon_cy - 9.5, 19.0, 19.0), -40, 80)
+                    painter.drawPath(arc2)
+            else:
+                # Mute cross
+                painter.setPen(QPen(QColor(255, 59, 48, 240), 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                painter.drawLine(QPointF(icon_cx + 2.0, icon_cy - 3.5), QPointF(icon_cx + 8.0, icon_cy + 3.5))
+                painter.drawLine(QPointF(icon_cx + 8.0, icon_cy - 3.5), QPointF(icon_cx + 2.0, icon_cy + 3.5))
+        else:
+            # Brightness sun icon
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 245)))
+            painter.drawEllipse(QPointF(icon_cx, icon_cy), 3.5, 3.5)
+            painter.setPen(QPen(QColor(255, 255, 255, 245), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            for ang in range(0, 360, 45):
+                rad = math.radians(ang)
+                x1 = icon_cx + math.cos(rad) * 5.2
+                y1 = icon_cy + math.sin(rad) * 5.2
+                x2 = icon_cx + math.cos(rad) * 8.0
+                y2 = icon_cy + math.sin(rad) * 8.0
+                painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+        painter.restore()
+
+        # 2. Continuous pill slider track with specular sheen
+        bar_x = 46.0
+        bar_w = w - bar_x - 56.0
+        bar_h = 7.0
         bar_y = (h - bar_h) / 2.0
 
         bar_bg = QRectF(bar_x, bar_y, bar_w, bar_h)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(255, 255, 255, 28))
-        painter.drawRoundedRect(bar_bg, 3.0, 3.0)
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1.0))
+        painter.setBrush(QColor(255, 255, 255, 24))
+        painter.drawRoundedRect(bar_bg, 3.5, 3.5)
 
         fill_w = bar_w * val
         if fill_w > 0:
             fill_r = QRectF(bar_x, bar_y, fill_w, bar_h)
             grad = QLinearGradient(bar_x, bar_y, bar_x + fill_w, bar_y)
-            grad.setColorAt(0.0, QColor("#FFFFFF"))
-            grad.setColorAt(1.0, QColor("#E0E0EB"))
+            grad.setColorAt(0.0, QColor(255, 255, 255, 255))
+            grad.setColorAt(1.0, QColor(220, 230, 245, 240))
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(grad))
-            painter.drawRoundedRect(fill_r, 3.0, 3.0)
+            painter.drawRoundedRect(fill_r, 3.5, 3.5)
 
-        # Right percentage readout
-        f_val = get_display_font(10)
+        # 3. Tabular readout
+        f_val = get_display_font(10.5)
         painter.setFont(f_val)
-        painter.setPen(COLOR_TEXT_SECONDARY)
-        painter.drawText(QRectF(w - 48.0, 0.0, 38.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, label)
+        painter.setPen(QColor(255, 255, 255, 225))
+        painter.drawText(QRectF(w - 52.0, 0.0, 42.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, label)
 
     def _paint_call_live(self, painter: QPainter, w: float, h: float):
         """
-        Renders live phone call card (420x74) with pulsing avatar and vector Answer/Decline buttons.
+        Renders live phone call card (440x74) with pulsing avatar and vector Answer/Decline buttons.
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -3003,9 +3055,9 @@ class DynamicIslandWidget(QWidget):
         subtitle = self._call_info.get("status", "iPhone • Incoming Call")
 
         # 1. Left circular avatar with pulsing green ring
-        av_x = 24.0
-        av_y = (h - 42.0) / 2.0
-        av_size = 42.0
+        av_x = 22.0
+        av_y = (h - 44.0) / 2.0
+        av_size = 44.0
         av_cx = av_x + av_size / 2.0
         av_cy = av_y + av_size / 2.0
 
@@ -3017,32 +3069,38 @@ class DynamicIslandWidget(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(QPointF(av_cx, av_cy), ring_r, ring_r)
 
-        # Avatar circle
+        # Avatar circle with monogram initial
         painter.setPen(Qt.PenStyle.NoPen)
         av_grad = QLinearGradient(av_x, av_y, av_x, av_y + av_size)
-        av_grad.setColorAt(0.0, QColor("#3A3D52"))
-        av_grad.setColorAt(1.0, QColor("#222433"))
+        av_grad.setColorAt(0.0, QColor(48, 54, 78, 255))
+        av_grad.setColorAt(1.0, QColor(26, 30, 46, 255))
         painter.setBrush(QBrush(av_grad))
         painter.drawEllipse(QRectF(av_x, av_y, av_size, av_size))
 
-        painter.setFont(get_display_font(15))
+        # Initial letter (bold white)
+        initial = (name[0] if name else "C").upper()
+        f_init = get_display_font(17)
+        f_init.setBold(True)
+        painter.setFont(f_init)
         painter.setPen(QColor("#FFFFFF"))
-        painter.drawText(QRectF(av_x, av_y, av_size, av_size), Qt.AlignmentFlag.AlignCenter, "👤")
+        painter.drawText(QRectF(av_x, av_y, av_size, av_size), Qt.AlignmentFlag.AlignCenter, initial)
 
-        # 2. Center caller name + subtitle
+        # 2. Center caller name + subtitle + animated voice wave
         text_x = av_x + av_size + 14.0
         text_w = w - text_x - 110.0
 
-        f_name = get_display_font(13)
+        f_name = get_display_font(13.5)
         f_name.setBold(True)
         painter.setFont(f_name)
         painter.setPen(COLOR_TEXT_PRIMARY)
-        painter.drawText(QRectF(text_x, av_y + 3.0, text_w, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, name)
+        painter.drawText(QRectF(text_x, av_y + 3.0, text_w, 20.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, name)
 
         f_sub = get_subtext_font(10)
         painter.setFont(f_sub)
+        painter.setPen(QColor(52, 199, 89))
+        painter.drawText(QRectF(text_x, av_y + 24.0, 10.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "●")
         painter.setPen(COLOR_TEXT_SECONDARY)
-        painter.drawText(QRectF(text_x, av_y + 22.0, text_w, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, subtitle)
+        painter.drawText(QRectF(text_x + 10.0, av_y + 24.0, text_w - 10.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, subtitle)
 
         # 3. Right vector buttons: Decline (#FF3B30) and Answer (#34C759)
         btn_r = 18.0
@@ -3053,24 +3111,37 @@ class DynamicIslandWidget(QWidget):
         self._call_decline_rect = QRectF(dec_x, btn_y, btn_r * 2.0, btn_r * 2.0)
         self._call_answer_rect = QRectF(ans_x, btn_y, btn_r * 2.0, btn_r * 2.0)
 
-        # Decline Button (#FF3B30)
+        # Decline Button (#FF3B30) with vector cross
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#FF3B30"))
         painter.drawEllipse(self._call_decline_rect)
-        painter.setFont(get_display_font(12))
-        painter.setPen(QColor("#FFFFFF"))
-        painter.drawText(self._call_decline_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+        dec_cross = QPainterPath()
+        arm = 4.2
+        dcx = dec_x + btn_r
+        dcy = btn_y + btn_r
+        dec_cross.moveTo(dcx - arm, dcy - arm)
+        dec_cross.lineTo(dcx + arm, dcy + arm)
+        dec_cross.moveTo(dcx + arm, dcy - arm)
+        dec_cross.lineTo(dcx - arm, dcy + arm)
+        painter.setPen(QPen(QColor(255, 255, 255, 250), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(dec_cross)
 
-        # Answer Button (#34C759)
+        # Answer Button (#34C759) with vector phone receiver
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#34C759"))
         painter.drawEllipse(self._call_answer_rect)
-        painter.setFont(get_display_font(12))
-        painter.setPen(QColor("#FFFFFF"))
-        painter.drawText(self._call_answer_rect, Qt.AlignmentFlag.AlignCenter, "📞")
+        acx = ans_x + btn_r
+        acy = btn_y + btn_r
+        # Crisp phone receiver glyph
+        f_ans = get_display_font(13)
+        painter.setFont(f_ans)
+        painter.setPen(QColor(255, 255, 255, 250))
+        painter.drawText(self._call_answer_rect, Qt.AlignmentFlag.AlignCenter, "✆")
 
     def _paint_otp_pill(self, painter: QPainter, w: float, h: float):
         """
-        Renders 2FA verification code pill (360x54) with monospaced tabular numerals and copy button.
+        Renders 2FA verification code pill (380x56) with monospaced tabular numerals and copy button.
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -3079,38 +3150,52 @@ class DynamicIslandWidget(QWidget):
         app_name = self._otp_info.get("app", "Messages")
         is_copied = self._otp_info.get("copied", False)
 
-        # Left app badge
-        badge_size = 32.0
+        # Left app badge with gradient & vector key/chat
+        badge_size = 36.0
         badge_x = 16.0
         badge_y = (h - badge_size) / 2.0
         badge_rect = QRectF(badge_x, badge_y, badge_size, badge_size)
 
-        painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
-        painter.setBrush(QBrush(QColor(86, 204, 242, 45)))
-        painter.drawRoundedRect(badge_rect, 8.0, 8.0)
+        badge_grad = QLinearGradient(badge_x, badge_y, badge_x, badge_y + badge_size)
+        badge_grad.setColorAt(0.0, QColor(10, 132, 255, 220))
+        badge_grad.setColorAt(1.0, QColor(0, 113, 227, 240))
+        painter.setPen(QPen(QColor(10, 132, 255, 80), 1.0))
+        painter.setBrush(QBrush(badge_grad))
+        painter.drawRoundedRect(badge_rect, 10.0, 10.0)
 
-        painter.setFont(get_display_font(13))
-        painter.setPen(QColor("#56CCF2"))
-        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "💬")
+        # Vector key / speech bubble in white
+        k_cx = badge_x + badge_size / 2.0
+        k_cy = badge_y + badge_size / 2.0
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(k_cx - 7.0, k_cy - 5.5, 14.0, 10.0), 2.5, 2.5)
+        tail = QPainterPath()
+        tail.moveTo(k_cx - 3.5, k_cy + 4.5)
+        tail.lineTo(k_cx - 6.0, k_cy + 7.5)
+        tail.lineTo(k_cx - 1.0, k_cy + 4.5)
+        tail.closeSubpath()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 245)))
+        painter.drawPath(path.united(tail))
 
         # Center: Title + Code in Monospaced Tabular Numerals
-        text_x = badge_x + badge_size + 12.0
-        text_w = w - text_x - 105.0
+        text_x = badge_x + badge_size + 14.0
+        text_w = w - text_x - 110.0
 
         f_lbl = get_microlabel_font()
         painter.setFont(f_lbl)
         painter.setPen(QColor(255, 255, 255, 160))
-        painter.drawText(QRectF(text_x, 8.0, text_w, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"{app_name.upper()} • 2FA CODE")
+        painter.drawText(QRectF(text_x, 9.0, text_w, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"{app_name.upper()} • VERIFICATION CODE")
 
-        f_code = get_monospaced_font(13)
+        f_code = get_monospaced_font(14)
+        f_code.setBold(True)
         painter.setFont(f_code)
         painter.setPen(COLOR_TEXT_PRIMARY)
-        painter.drawText(QRectF(text_x, 24.0, text_w, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, code)
+        painter.drawText(QRectF(text_x, 26.0, text_w, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, code)
 
         # Right Action Button: "Copy Code" -> "Copied ✓"
-        btn_w = 90.0
+        btn_w = 92.0
         btn_h = 28.0
-        btn_x = w - btn_w - 14.0
+        btn_x = w - btn_w - 16.0
         btn_y = (h - btn_h) / 2.0
         self._otp_copy_rect = QRectF(btn_x, btn_y, btn_w, btn_h)
 
@@ -3118,20 +3203,23 @@ class DynamicIslandWidget(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#34C759"))
             painter.drawRoundedRect(self._otp_copy_rect, 14.0, 14.0)
-            painter.setFont(get_display_font(10))
+            f_btn = get_display_font(10.5)
+            f_btn.setBold(True)
+            painter.setFont(f_btn)
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(self._otp_copy_rect, Qt.AlignmentFlag.AlignCenter, "Copied ✓")
         else:
             painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0))
-            painter.setBrush(QColor(255, 255, 255, 24))
+            painter.setBrush(QColor(255, 255, 255, 22))
             painter.drawRoundedRect(self._otp_copy_rect, 14.0, 14.0)
-            painter.setFont(get_display_font(10))
+            f_btn = get_display_font(10.5)
+            painter.setFont(f_btn)
             painter.setPen(COLOR_TEXT_PRIMARY)
             painter.drawText(self._otp_copy_rect, Qt.AlignmentFlag.AlignCenter, "Copy Code")
 
     def _paint_file_shelf(self, painter: QPainter, w: float, h: float):
         """
-        Renders drag-and-drop file shelf tray (460x126) with dashed drop zone and stashed file cards.
+        Renders drag-and-drop file shelf tray (440x130) with dashed drop zone and stashed file cards.
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -3141,34 +3229,48 @@ class DynamicIslandWidget(QWidget):
         f_head.setBold(True)
         painter.setFont(f_head)
         painter.setPen(QColor("#56CCF2"))
-        painter.drawText(QRectF(r_top + 14.0, 6.0, 160.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📁 FILE STASH SHELF")
+        painter.drawText(QRectF(r_top + 14.0, 8.0, 200.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "AIRDROP & FILE SHELF")
 
         # Clear Button
-        clear_w = 48.0
-        clear_h = 18.0
-        clear_x = w - r_top - clear_w - 12.0
-        clear_y = 5.0
+        clear_w = 52.0
+        clear_h = 20.0
+        clear_x = w - r_top - clear_w - 14.0
+        clear_y = 6.0
         self._shelf_clear_rect = QRectF(clear_x, clear_y, clear_w, clear_h)
         is_clear_hov = getattr(self, "_shelf_hover_clear", False)
-        painter.setPen(QPen(QColor(255, 255, 255, 50 if is_clear_hov else 25), 1.0))
-        painter.setBrush(QBrush(QColor(255, 255, 255, 35 if is_clear_hov else 15)))
-        painter.drawRoundedRect(self._shelf_clear_rect, 9.0, 9.0)
+        painter.setPen(QPen(QColor(255, 255, 255, 55 if is_clear_hov else 28), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 40 if is_clear_hov else 16)))
+        painter.drawRoundedRect(self._shelf_clear_rect, 10.0, 10.0)
         painter.setFont(get_microlabel_font())
         painter.setPen(QColor("#FFFFFF" if is_clear_hov else "#A0A0AB"))
         painter.drawText(self._shelf_clear_rect, Qt.AlignmentFlag.AlignCenter, "Clear")
 
         # Dashed Luminous Drop Zone
-        zone_rect = QRectF(14.0, 26.0, w - 28.0, h - 38.0)
-        dash_pen = QPen(QColor(255, 255, 255, 55), 1.2, Qt.PenStyle.DashLine)
-        dash_pen.setDashPattern([4, 4])
+        zone_rect = QRectF(16.0, 30.0, w - 32.0, h - 42.0)
+        dash_pen = QPen(QColor(255, 255, 255, 45), 1.2, Qt.PenStyle.DashLine)
+        dash_pen.setDashPattern([5, 5])
         painter.setPen(dash_pen)
         painter.setBrush(QBrush(QColor(255, 255, 255, 8)))
         painter.drawRoundedRect(zone_rect, 14.0, 14.0)
 
         if not self._shelf_files:
+            # Clean vector upload arrow
+            ucx = zone_rect.center().x()
+            ucy = zone_rect.center().y() - 10.0
+            u_path = QPainterPath()
+            u_path.moveTo(ucx, ucy - 6.0)
+            u_path.lineTo(ucx - 5.0, ucy - 1.0)
+            u_path.moveTo(ucx, ucy - 6.0)
+            u_path.lineTo(ucx + 5.0, ucy - 1.0)
+            u_path.moveTo(ucx, ucy - 6.0)
+            u_path.lineTo(ucx, ucy + 6.0)
+            painter.setPen(QPen(QColor("#56CCF2"), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(u_path)
+
             painter.setFont(get_subtext_font(11))
-            painter.setPen(QColor(255, 255, 255, 160))
-            painter.drawText(zone_rect, Qt.AlignmentFlag.AlignCenter, "📎  Drag & drop files here to stash temporarily")
+            painter.setPen(QColor(255, 255, 255, 210))
+            painter.drawText(QRectF(zone_rect.left(), ucy + 10.0, zone_rect.width(), 18.0), Qt.AlignmentFlag.AlignCenter, "Drop files here to stash or share")
         else:
             card_w = 88.0
             card_h = 72.0
@@ -3265,6 +3367,30 @@ class DynamicIslandWidget(QWidget):
     def set_download_progress(self, progress: float):
         self._download_progress = max(0.0, min(1.0, progress))
         self.update()
+
+    def simulate_download(self):
+        """Simulates an active download smoothly progressing from 5% to 100% with completion alert."""
+        self._sim_download_active = True
+        self._download_progress = 0.05
+        self.set_glow_state("notification", duration_sec=4.0)
+        if not self.isVisible():
+            self.show()
+            self.raise_()
+        self.update()
+
+        if not hasattr(self, "_sim_dl_timer"):
+            self._sim_dl_timer = QTimer(self)
+            def _step_dl():
+                self._download_progress += 0.035
+                if self._download_progress >= 1.0:
+                    self._download_progress = 1.0
+                    self._sim_dl_timer.stop()
+                    self._sim_download_active = False
+                    self.set_glow_state("success", duration_sec=2.5)
+                    self.trigger_toast("Downloads", "Download Complete", "DynamicIsland-v2.6.zip ready in Downloads")
+                self.update()
+            self._sim_dl_timer.timeout.connect(_step_dl)
+        self._sim_dl_timer.start(80)
 
     def toggle_auto_hide(self, enabled: Optional[bool] = None):
         if enabled is None:
