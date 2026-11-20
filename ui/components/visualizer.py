@@ -34,10 +34,10 @@ class AudioVisualizerWidget(QWidget):
         ]
         self._time = 0.0
 
-        # Dynamic Gradients (Defaults to golden amber, dynamically updated from album cover)
-        self._color_active_top = QColor("#FFEA33")
-        self._color_active_bottom = QColor("#FF8C00")
-        self._color_inactive = QColor(255, 255, 255, 32)
+        # Minimalist studio waveform (Crisp white gradients matching Apple Music)
+        self._color_active_top = QColor(255, 255, 255, 245)
+        self._color_active_bottom = QColor(255, 255, 255, 160)
+        self._color_inactive = QColor(255, 255, 255, 30)
 
         # 60 FPS animation timer
         self._timer = QTimer(self)
@@ -45,14 +45,21 @@ class AudioVisualizerWidget(QWidget):
         self._timer.timeout.connect(self._update_physics)
         self._timer.start()
 
-        total_w = self.num_bars * self.bar_width + (self.num_bars - 1) * self.bar_spacing
+        total_w = int(math.ceil(self.num_bars * self.bar_width + (self.num_bars - 1) * self.bar_spacing))
         self.setFixedWidth(total_w)
         self.setFixedHeight(30)
 
     def set_accent_colors(self, color_top: QColor, color_bottom: QColor):
-        """Dynamically binds equalizer colors to extracted album cover swatches."""
-        self._color_active_top = QColor(color_top)
-        self._color_active_bottom = QColor(color_bottom)
+        """Dynamically binds equalizer colors to extracted album swatches with studio white blending."""
+        r1 = int(255 * 0.65 + color_top.red() * 0.35)
+        g1 = int(255 * 0.65 + color_top.green() * 0.35)
+        b1 = int(255 * 0.65 + color_top.blue() * 0.35)
+        self._color_active_top = QColor(r1, g1, b1, 245)
+
+        r2 = int(255 * 0.55 + color_bottom.red() * 0.45)
+        g2 = int(255 * 0.55 + color_bottom.green() * 0.45)
+        b2 = int(255 * 0.55 + color_bottom.blue() * 0.45)
+        self._color_active_bottom = QColor(r2, g2, b2, 175)
         self.update()
 
     def set_playing(self, playing: bool):
