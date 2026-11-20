@@ -449,8 +449,8 @@ class DynamicIslandWidget(QWidget):
             w = TOAST_WIDTH
             h = TOAST_HEIGHT
         elif state == "device_popup":
-            w = 450
-            h = 114
+            w = 460
+            h = 132
         else:  # expanded
             w = EXPANDED_WIDTH
             h = EXPANDED_HEIGHT
@@ -1069,30 +1069,42 @@ class DynamicIslandWidget(QWidget):
         painter.setClipPath(notch_path)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-        # 3. Canvas Surface Fill
+        # 3. Canvas Surface Fill (True Liquid Obsidian Glass)
         if has_media and self._glass_bg_pixmap and not self._glass_bg_pixmap.isNull() and self._island_state != "device_popup":
             painter.drawPixmap(0, 0, int(w), int(h), self._glass_bg_pixmap)
 
             scrim = QLinearGradient(0, 0, 0, h)
-            scrim.setColorAt(0.0, QColor(10, 10, 16, 120))
-            scrim.setColorAt(0.6, QColor(8, 8, 14, 160))
-            scrim.setColorAt(1.0, QColor(6, 6, 10, 190))
+            scrim.setColorAt(0.0, QColor(16, 18, 28, 130))
+            scrim.setColorAt(0.5, QColor(10, 11, 18, 168))
+            scrim.setColorAt(1.0, QColor(6, 7, 10, 205))
             painter.fillRect(0, 0, int(w), int(h), scrim)
         else:
             canvas_grad = QLinearGradient(0, 0, 0, h)
-            canvas_grad.setColorAt(0.0, QColor("#141418"))
-            canvas_grad.setColorAt(0.4, COLOR_CANVAS)
-            canvas_grad.setColorAt(1.0, QColor("#040406"))
+            canvas_grad.setColorAt(0.0, QColor(24, 26, 38, 238))
+            canvas_grad.setColorAt(0.35, QColor(14, 15, 23, 248))
+            canvas_grad.setColorAt(0.75, QColor(9, 10, 15, 252))
+            canvas_grad.setColorAt(1.0, QColor(5, 5, 8, 255))
             painter.fillRect(0, 0, int(w), int(h), canvas_grad)
 
-        # 4. Top Glass Sheen
-        sheen_h = min(h * 0.45, 16.0)
-        sheen_grad = QLinearGradient(0, 0, 0, sheen_h)
-        sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 26))
-        sheen_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
-        painter.fillRect(QRectF(0, 0, w, sheen_h), sheen_grad)
+        # 4. Liquid Glass Sheen & Top Meniscus
+        sheen_grad = QLinearGradient(0, 0, w * 0.55, h * 0.85)
+        sheen_grad.setColorAt(0.0, QColor(255, 255, 255, 28))
+        sheen_grad.setColorAt(0.35, QColor(255, 255, 255, 10))
+        sheen_grad.setColorAt(0.70, QColor(255, 255, 255, 0))
+        painter.fillRect(QRectF(0, 0, w, h), sheen_grad)
 
-        # 5. Animated Moving Gradient Effect
+        # Top specular meniscus along curved top rim
+        r_top = NOTCH_RADIUS_TOP
+        meniscus_grad = QLinearGradient(0, 0, w, 0)
+        meniscus_grad.setColorAt(0.0, QColor(255, 255, 255, 0))
+        meniscus_grad.setColorAt(r_top / w, QColor(255, 255, 255, 45))
+        meniscus_grad.setColorAt(0.5, QColor(255, 255, 255, 130 if self._hovered else 85))
+        meniscus_grad.setColorAt((w - r_top) / w, QColor(255, 255, 255, 45))
+        meniscus_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(QPen(QBrush(meniscus_grad), 1.5))
+        painter.drawLine(QPointF(0, 0.75), QPointF(w, 0.75))
+
+        # 5. Animated Moving Gradient Effect (Dual-Vortex Liquid Aurora)
         self._paint_moving_gradient(painter, w, h)
 
         # 6. State-Specific Content
@@ -1112,38 +1124,50 @@ class DynamicIslandWidget(QWidget):
         painter.drawPath(notch_path)
 
         # 8. Subtle Milled Edge Inner Highlight
-        highlight_alpha = 24 if self._hovered else 14
+        highlight_alpha = 28 if self._hovered else 16
         painter.setPen(QPen(QColor(255, 255, 255, highlight_alpha), 1.0))
         painter.drawPath(notch_path)
 
     def _paint_moving_gradient(self, painter: QPainter, w: float, h: float):
         t = self._gradient_shift
-        cx = w * 0.5 + math.cos(t * 0.8) * (w * 0.32)
-        cy = h * 0.5 + math.sin(t * 0.6) * (h * 0.35)
-        glow_radius = max(w, h) * 0.85
 
-        grad = QRadialGradient(QPointF(cx, cy), glow_radius)
+        # Vortex 1: Primary dynamic glow (amber gold / cyan / emerald)
+        cx1 = w * 0.5 + math.cos(t * 0.75) * (w * 0.35)
+        cy1 = h * 0.45 + math.sin(t * 0.55) * (h * 0.32)
+        r1 = max(w, h) * 0.88
+        grad1 = QRadialGradient(QPointF(cx1, cy1), r1)
 
         c1 = QColor(self._current_glow_c1)
-        c1.setAlphaF(min(1.0, self._current_glow_opacity * 0.85))
+        c1.setAlphaF(min(1.0, self._current_glow_opacity * 0.90))
 
         c2 = QColor(self._current_glow_c2)
-        c2.setAlphaF(min(1.0, self._current_glow_opacity * 0.40))
+        c2.setAlphaF(min(1.0, self._current_glow_opacity * 0.45))
 
-        accent_r = int(140 + 70 * math.sin(t * 0.5))
-        accent_g = int(90 + 60 * math.cos(t * 0.7))
-        accent_b = int(220 + 35 * math.sin(t * 0.4))
-        c_accent = QColor(accent_r, accent_g, accent_b, 40)
+        grad1.setColorAt(0.0, c1)
+        grad1.setColorAt(0.42, c2)
+        grad1.setColorAt(1.0, QColor(0, 0, 0, 0))
 
-        grad.setColorAt(0.0, c1)
-        grad.setColorAt(0.40, c2)
-        grad.setColorAt(0.70, c_accent)
-        grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        # Vortex 2: Fluid Chromatic Dispersion (iridescent liquid sheen)
+        cx2 = w * 0.5 - math.sin(t * 0.90) * (w * 0.30)
+        cy2 = h * 0.55 - math.cos(t * 0.70) * (h * 0.28)
+        r2 = max(w, h) * 0.72
+        grad2 = QRadialGradient(QPointF(cx2, cy2), r2)
+
+        prism_r = int(120 + 75 * math.sin(t * 0.6))
+        prism_g = int(80 + 70 * math.cos(t * 0.8))
+        prism_b = int(215 + 40 * math.sin(t * 0.5))
+        c_prism = QColor(prism_r, prism_g, prism_b, 50)
+
+        grad2.setColorAt(0.0, c_prism)
+        grad2.setColorAt(0.50, QColor(prism_r, prism_g, prism_b, 16))
+        grad2.setColorAt(1.0, QColor(0, 0, 0, 0))
 
         painter.save()
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(grad))
+        painter.setBrush(QBrush(grad1))
+        painter.drawRect(QRectF(0, 0, w, h))
+        painter.setBrush(QBrush(grad2))
         painter.drawRect(QRectF(0, 0, w, h))
         painter.restore()
 
@@ -1270,46 +1294,124 @@ class DynamicIslandWidget(QWidget):
         painter.restore()
 
     def _paint_toast_notch(self, painter: QPainter, w: float, h: float):
+        """
+        Redesigned liquid glass notification toast with frosted squircle app badge,
+        categorized glowing glyphs, crisp typography, and dismissal controls.
+        """
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
         r_top = NOTCH_RADIUS_TOP
-        content_left = r_top + 14.0
-        text_left = content_left + 22.0
-        text_width = w - text_left - 14.0
-
-        # Bell icon – vertically centered
-        icon_font = get_display_font(12)
-        painter.setFont(icon_font)
-        painter.setPen(QColor("#56CCF2"))
-        fm_icon = QFontMetrics(icon_font)
-        icon_rect = QRectF(content_left, 0.0, 20.0, h)
-        painter.drawText(icon_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "🔔")
-
         app_name = (self._toast_info.get("app") or "NOTIFICATION").upper()
         title    = self._toast_info.get("title") or "Incoming Alert"
         message  = self._toast_info.get("message") or ""
-        display_text = f"{title}  •  {message}" if message else title
 
-        # App name label (top half)
+        # Dynamic category iconography & palette
+        app_lower = app_name.lower()
+        if any(k in app_lower for k in ("message", "chat", "slack", "teams", "whatsapp", "telegram", "discord")):
+            icon_char = "💬"
+            accent_col = QColor("#56CCF2")
+        elif any(k in app_lower for k in ("mail", "outlook", "gmail", "thunderbird")):
+            icon_char = "✉️"
+            accent_col = QColor("#4A90E2")
+        elif any(k in app_lower for k in ("calendar", "meeting", "reminder", "alarm", "clock")):
+            icon_char = "📅"
+            accent_col = QColor("#B388FF")
+        elif any(k in app_lower for k in ("music", "spotify", "apple music", "ytmusic")):
+            icon_char = "🎵"
+            accent_col = QColor("#FFD600")
+        else:
+            icon_char = "🔔"
+            accent_col = QColor("#56CCF2")
+
+        # ── 1. Frosted Glass App Icon Badge ─────────────────────────
+        badge_size = 42.0
+        badge_x = r_top + 10.0
+        badge_y = (h - badge_size) / 2.0
+        badge_rect = QRectF(badge_x, badge_y, badge_size, badge_size)
+
+        # Soft ambient aura behind badge
+        badge_glow = QRadialGradient(QPointF(badge_x + badge_size * 0.5, badge_y + badge_size * 0.5), badge_size * 0.75)
+        glow_c = QColor(accent_col)
+        glow_c.setAlpha(45)
+        badge_glow.setColorAt(0.0, glow_c)
+        badge_glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(badge_glow))
+        painter.drawEllipse(QRectF(badge_x - 6.0, badge_y - 6.0, badge_size + 12.0, badge_size + 12.0))
+
+        # Badge glass container
+        badge_grad = QLinearGradient(badge_x, badge_y, badge_x, badge_y + badge_size)
+        badge_grad.setColorAt(0.0, QColor(255, 255, 255, 28))
+        badge_grad.setColorAt(1.0, QColor(255, 255, 255, 12))
+        painter.setPen(QPen(QColor(255, 255, 255, 48), 1.0))
+        painter.setBrush(QBrush(badge_grad))
+        painter.drawRoundedRect(badge_rect, 12.0, 12.0)
+
+        # Badge icon
+        icon_font = get_display_font(15)
+        painter.setFont(icon_font)
+        painter.setPen(accent_col)
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, icon_char)
+
+        # Tiny glowing badge indicator dot
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(accent_col))
+        painter.drawEllipse(QRectF(badge_x + badge_size - 7.0, badge_y + 3.0, 5.0, 5.0))
+
+        # ── 2. Information Column ───────────────────────────────────
+        text_x = badge_x + badge_size + 13.0
+        btn_w = 26.0
+        text_w = w - text_x - btn_w - 18.0
+
+        # Row 1: App Name & "now" timestamp
         label_font = get_microlabel_font()
         painter.setFont(label_font)
-        painter.setPen(QColor("#56CCF2"))
-        fm_label = QFontMetrics(label_font)
-        label_rect = QRectF(text_left, 0.0, text_width, h * 0.52)
-        painter.drawText(label_rect, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft, app_name)
+        painter.setPen(accent_col)
+        painter.drawText(QRectF(text_x, badge_y + 1.0, text_w - 52.0, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, app_name)
 
-        # Notification body (bottom half) — elided, smooth
-        body_font = get_subtext_font(11)
-        painter.setFont(body_font)
+        time_font = get_microlabel_font()
+        painter.setFont(time_font)
+        painter.setPen(QColor(255, 255, 255, 125))
+        painter.drawText(QRectF(text_x + text_w - 50.0, badge_y + 1.0, 50.0, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, "now")
+
+        # Row 2: Title (Bold crisp white)
+        title_font = get_display_font(11)
+        title_font.setBold(True)
+        painter.setFont(title_font)
         painter.setPen(COLOR_TEXT_PRIMARY)
-        fm_body = QFontMetrics(body_font)
-        elided = fm_body.elidedText(display_text, Qt.TextElideMode.ElideRight, int(text_width))
-        body_rect = QRectF(text_left, h * 0.50, text_width, h * 0.50)
-        painter.drawText(body_rect, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, elided)
+        fm_title = painter.fontMetrics()
+        elided_title = fm_title.elidedText(title, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, badge_y + 15.0, text_w, 17.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_title)
+
+        # Row 3: Message Body (Smooth elided secondary text)
+        body_font = get_subtext_font(10)
+        painter.setFont(body_font)
+        painter.setPen(COLOR_TEXT_SECONDARY)
+        fm_body = painter.fontMetrics()
+        elided_body = fm_body.elidedText(message, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, badge_y + 31.0, text_w, 15.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_body)
+
+        # ── 3. Frosted Dismiss Button ───────────────────────────────
+        close_x = w - r_top - 20.0
+        close_y = (h - 22.0) / 2.0
+        close_rect = QRectF(close_x, close_y, 22.0, 22.0)
+        self._toast_close_rect = close_rect
+
+        painter.setPen(QPen(QColor(255, 255, 255, 28), 1.0))
+        painter.setBrush(QBrush(QColor(255, 255, 255, 14)))
+        painter.drawEllipse(close_rect)
+
+        painter.setFont(get_display_font(9))
+        painter.setPen(QColor(255, 255, 255, 170))
+        painter.drawText(close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
 
     def _paint_device_popup_notch(self, painter: QPainter, w: float, h: float):
         """
-        Draws the sleek dark glassy Dynamic Island accessory notification.
-        Matches the expanded music island aesthetic with real-time audio waveform.
+        Draws the sleek dark liquid glassy Dynamic Island accessory showcase.
+        Features a prominent, floating 3D device render, ambient aura, soft contact
+        shadow, live 12-bar audio equalizer waveform, and frosted glass Done button.
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -1320,6 +1422,28 @@ class DynamicIslandWidget(QWidget):
         subtitle = self._device_info.get("display_subtitle") or "Connected  •  Audio Output Ready"
 
         r_top = NOTCH_RADIUS_TOP
+
+        # Theme accent based on device category
+        if cat == "airpods":
+            cat_label = "● AIRPODS PRO"
+            accent_col = QColor("#38EF7D")  # Green LED
+            eq_col = QColor("#FFD600")
+        elif cat == "headphones":
+            cat_label = "● OVER-EAR HEADPHONES"
+            accent_col = QColor("#56CCF2")  # Cyan rim light
+            eq_col = QColor("#56CCF2")
+        elif cat == "speaker":
+            cat_label = "● BLUETOOTH SPEAKER"
+            accent_col = QColor("#00D2FF")  # Cyan LED ring
+            eq_col = QColor("#00D2FF")
+        elif cat == "iem":
+            cat_label = "● HI-FI IN-EAR MONITORS"
+            accent_col = QColor("#B388FF")  # Sapphire / violet resin
+            eq_col = QColor("#FFD600")
+        else:
+            cat_label = "● AUDIO ACCESSORY"
+            accent_col = QColor("#38EF7D")
+            eq_col = QColor("#FFD600")
 
         # ── 1. Top Bar: Clock & Battery ──────────────────────────────
         time_font = get_display_font(11)
@@ -1335,85 +1459,126 @@ class DynamicIslandWidget(QWidget):
         icon = "⚡" if plugged else "🔋"
         painter.drawText(QRectF(w - r_top - 100.0, 4.0, 90.0, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, f"{icon} {pct}%")
 
-        # ── 2. Inner Glass Card ──────────────────────────────────────
-        card_x = 16.0
-        card_y = 24.0
-        card_w = w - 32.0
-        card_h = h - 32.0
+        # ── 2. Inner Liquid Glass Card ───────────────────────────────
+        card_x = 14.0
+        card_y = 25.0
+        card_w = w - 28.0
+        card_h = h - 35.0
         card_rect = QRectF(card_x, card_y, card_w, card_h)
 
-        painter.setPen(QPen(QColor(255, 255, 255, 24), 1.0))
-        painter.setBrush(QBrush(QColor(14, 14, 20, 175)))
-        painter.drawRoundedRect(card_rect, 16.0, 16.0)
+        # Inner card base fill & dual-tone specular border
+        card_grad = QLinearGradient(card_x, card_y, card_x, card_y + card_h)
+        card_grad.setColorAt(0.0, QColor(22, 24, 36, 195))
+        card_grad.setColorAt(1.0, QColor(12, 13, 20, 215))
 
-        # ── 3. Device Art Thumbnail Box ──────────────────────────────
-        art_box_x = card_x + 9.0
-        art_box_y = card_y + 9.0
-        art_box_size = 64.0
-        art_box_rect = QRectF(art_box_x, art_box_y, art_box_size, art_box_size)
+        painter.setPen(QPen(QColor(255, 255, 255, 36), 1.0))
+        painter.setBrush(QBrush(card_grad))
+        painter.drawRoundedRect(card_rect, 18.0, 18.0)
 
-        painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
-        painter.setBrush(QBrush(QColor(255, 255, 255, 14)))
-        painter.drawRoundedRect(art_box_rect, 13.0, 13.0)
+        # Inner card top specular highlight line
+        inner_meniscus = QLinearGradient(card_x, card_y, card_x + card_w, card_y)
+        inner_meniscus.setColorAt(0.0, QColor(255, 255, 255, 0))
+        inner_meniscus.setColorAt(0.2, QColor(255, 255, 255, 45))
+        inner_meniscus.setColorAt(0.5, QColor(255, 255, 255, 80))
+        inner_meniscus.setColorAt(0.8, QColor(255, 255, 255, 45))
+        inner_meniscus.setColorAt(1.0, QColor(255, 255, 255, 0))
+        painter.setPen(QPen(QBrush(inner_meniscus), 1.0))
+        painter.drawLine(QPointF(card_x + 18.0, card_y + 0.5), QPointF(card_x + card_w - 18.0, card_y + 0.5))
 
+        # ── 3. Floating 3D Device Art Showcase ───────────────────────
+        dev_box_w = 92.0
+        dev_cx = card_x + dev_box_w * 0.5
+        dev_cy = card_y + card_h * 0.5
+        art_size = 76.0
+
+        # Ambient Aura Glow beneath floating 3D device
+        pedestal_glow = QRadialGradient(QPointF(dev_cx, dev_cy + 8.0), 48.0)
+        pedestal_c = QColor(accent_col)
+        pedestal_c.setAlpha(55)
+        pedestal_glow.setColorAt(0.0, pedestal_c)
+        pedestal_glow.setColorAt(0.55, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 18))
+        pedestal_glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(pedestal_glow))
+        painter.drawEllipse(QRectF(dev_cx - 45.0, dev_cy - 28.0, 90.0, 72.0))
+
+        # Soft 3D Contact Shadow
+        shadow_grad = QRadialGradient(QPointF(dev_cx, dev_cy + 25.0), 30.0)
+        shadow_grad.setColorAt(0.0, QColor(0, 0, 0, 140))
+        shadow_grad.setColorAt(0.6, QColor(0, 0, 0, 45))
+        shadow_grad.setColorAt(1.0, QColor(0, 0, 0, 0))
+        painter.setBrush(QBrush(shadow_grad))
+        painter.drawEllipse(QRectF(dev_cx - 30.0, dev_cy + 20.0, 60.0, 11.0))
+
+        # Render floating 3D Device
         pix = self._device_pixmaps.get(cat)
         if pix and not pix.isNull():
-            target_s = int(art_box_size - 12.0)
             smooth_pix = pix.scaled(
-                target_s, target_s,
+                int(art_size), int(art_size),
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation
             )
-            ix = art_box_x + (art_box_size - smooth_pix.width()) / 2.0
-            iy = art_box_y + (art_box_size - smooth_pix.height()) / 2.0
+            ix = dev_cx - smooth_pix.width() / 2.0
+            iy = dev_cy - smooth_pix.height() / 2.0 - 2.0  # Floating slightly above shadow
             painter.drawPixmap(int(ix), int(iy), smooth_pix)
 
-        # ── 4. Device Titles ─────────────────────────────────────────
-        text_x = art_box_x + art_box_size + 14.0
-        btn_w = 68.0
-        text_w = card_w - art_box_size - btn_w - 36.0
+        # ── 4. Device Information Column ─────────────────────────────
+        text_x = card_x + dev_box_w + 8.0
+        btn_w = 64.0
+        btn_h = 32.0
+        btn_x = card_x + card_w - btn_w - 14.0
+        text_w = btn_x - text_x - 10.0
 
+        # Row 1: Category Tag (e.g. ● AIRPODS PRO)
+        cat_font = get_microlabel_font()
+        painter.setFont(cat_font)
+        painter.setPen(accent_col)
+        painter.drawText(QRectF(text_x, card_y + 10.0, text_w, 14.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, cat_label)
+
+        # Row 2: Device Title (Large bold white)
         title_font = get_display_font(13)
         title_font.setBold(True)
         painter.setFont(title_font)
-        painter.setPen(QColor("#FFFFFF"))
+        painter.setPen(COLOR_TEXT_PRIMARY)
         fm_t = painter.fontMetrics()
         elided_title = fm_t.elidedText(title, Qt.TextElideMode.ElideRight, int(text_w))
-        painter.drawText(QRectF(text_x, card_y + 11.0, text_w, 20.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_title)
+        painter.drawText(QRectF(text_x, card_y + 25.0, text_w, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_title)
 
-        sub_font = get_subtext_font(10)
+        # Row 3: Subtitle
+        sub_font = get_subtext_font(9.5)
         painter.setFont(sub_font)
-        painter.setPen(QColor(255, 255, 255, 160))
+        painter.setPen(QColor(255, 255, 255, 175))
         fm_s = painter.fontMetrics()
         elided_sub = fm_s.elidedText(subtitle, Qt.TextElideMode.ElideRight, int(text_w))
-        painter.drawText(QRectF(text_x, card_y + 32.0, text_w, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_sub)
+        painter.drawText(QRectF(text_x, card_y + 47.0, text_w, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_sub)
 
-        # ── 5. Dynamic Live Waveform Bars ────────────────────────────
+        # Row 4: 12-Bar Live Waveform + Connected Badge
         wave_x = text_x
-        wave_y = card_y + 53.0
+        wave_y = card_y + 68.0
         phase = getattr(self, "_mini_eq_phase", 0.0)
-        for idx in range(10):
-            bar_h = 4.0 + 13.0 * (math.sin(phase * 1.5 + idx * 0.65) ** 2)
-            bx = wave_x + idx * 4.5
-            by = wave_y + (17.0 - bar_h) / 2.0
+        for idx in range(12):
+            bar_h = 3.5 + 13.0 * (math.sin(phase * 1.6 + idx * 0.52) ** 2)
+            bx = wave_x + idx * 4.6
+            by = wave_y + (16.0 - bar_h) / 2.0
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor("#FFD600")))
-            painter.drawRoundedRect(QRectF(bx, by, 2.5, bar_h), 1.2, 1.2)
+            painter.setBrush(QBrush(eq_col))
+            painter.drawRoundedRect(QRectF(bx, by, 2.4, bar_h), 1.2, 1.2)
 
         status_font = get_microlabel_font()
         painter.setFont(status_font)
         painter.setPen(QColor("#38EF7D"))
-        painter.drawText(QRectF(wave_x + 10 * 4.5 + 8.0, card_y + 51.0, 75.0, 18.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "CONNECTED")
+        painter.drawText(QRectF(wave_x + 12 * 4.6 + 8.0, wave_y, 85.0, 16.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "● READY")
 
-        # ── 6. Frosted Glass "Done" Button ───────────────────────────
-        btn_h = 32.0
-        btn_x = card_x + card_w - btn_w - 12.0
+        # ── 5. Frosted Glass "Done" Button ───────────────────────────
         btn_y = card_y + (card_h - btn_h) / 2.0
         self._device_done_rect = QRectF(btn_x, btn_y, btn_w, btn_h)
 
         is_hovered = getattr(self, "_device_done_hovered", False)
-        painter.setPen(QPen(QColor(255, 255, 255, 60 if is_hovered else 36), 1.0))
-        painter.setBrush(QBrush(QColor(255, 255, 255, 48 if is_hovered else 24)))
+        btn_border_alpha = 90 if is_hovered else 45
+        btn_bg_alpha = 48 if is_hovered else 24
+
+        painter.setPen(QPen(QColor(255, 255, 255, btn_border_alpha), 1.2))
+        painter.setBrush(QBrush(QColor(255, 255, 255, btn_bg_alpha)))
         painter.drawRoundedRect(self._device_done_rect, 16.0, 16.0)
 
         btn_font = get_display_font(11)

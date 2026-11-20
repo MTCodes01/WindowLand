@@ -11,8 +11,8 @@ COMPACT_IDLE_WIDTH = 200
 COMPACT_MUSIC_WIDTH = 320
 COMPACT_HEIGHT = 34
 
-TOAST_WIDTH = 380
-TOAST_HEIGHT = 48
+TOAST_WIDTH = 420
+TOAST_HEIGHT = 68
 
 EXPANDED_WIDTH = 420
 EXPANDED_HEIGHT = 180
@@ -79,11 +79,15 @@ def get_microlabel_font():
     return _apply_smooth(font)
 
 def get_display_font(size=12):
-    font = QFont("Segoe UI", size, QFont.Weight.Bold)
+    font = QFont("Segoe UI")
+    font.setPointSizeF(float(size))
+    font.setWeight(QFont.Weight.Bold)
     return _apply_smooth(font)
 
 def get_subtext_font(size=10):
-    font = QFont("Segoe UI", size, QFont.Weight.Normal)
+    font = QFont("Segoe UI")
+    font.setPointSizeF(float(size))
+    font.setWeight(QFont.Weight.Normal)
     return _apply_smooth(font)
 
 # Modern Curvy Dark Glass QSS Stylesheet
