@@ -14,9 +14,10 @@ import os
 import sys
 import math
 import time
+import datetime
 import ctypes
 from ctypes import wintypes
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from PIL import Image, ImageFilter, ImageEnhance
 
 from PyQt6.QtWidgets import (
@@ -580,7 +581,7 @@ class DynamicIslandWidget(QWidget):
         self._hovered = False
 
         # Current Data Cache
-        self._time_str = "12:37 PM"
+        self._time_str = "12:37"
         self._date_str = "Today"
         self._media_info: Dict[str, Any] = {
             "has_media": False,
@@ -1223,6 +1224,37 @@ class DynamicIslandWidget(QWidget):
             self.set_glow_state("reminders")
         else:
             self.set_glow_state("idle")
+
+    def _get_time_colors(self) -> Tuple[QColor, QColor]:
+        """
+        Returns (col_hr, col_min) for prominent dual-color clock rendering.
+        Hours: Crisp pure white (#FFFFFF).
+        Minutes: Vibrant accent color derived from track artwork, or dynamic amber (#FF9F0A).
+        """
+        col_hr = QColor(255, 255, 255)
+        accent_hex = self._media_info.get("accent_color")
+        if accent_hex and self._media_info.get("is_playing", False):
+            c = QColor(accent_hex)
+            h, s, v, _ = c.getHsv()
+            v = max(v, 225)
+            s = max(min(s, 220), 130)
+            col_min = QColor.fromHsv(h, s, v)
+        else:
+            col_min = QColor("#FF9F0A")  # Apple Watch vibrant amber
+        return col_hr, col_min
+
+    def _get_24h_time_parts(self) -> Tuple[str, str]:
+        """
+        Returns (hh, mm) in 24-hour format with guaranteed 2 digits (e.g. '15', '49' or '03', '05').
+        """
+        try:
+            now = datetime.datetime.now()
+            return now.strftime("%H"), now.strftime("%M")
+        except Exception:
+            parts = self._time_str.split(" ")[0].split(":")
+            hh = parts[0].zfill(2) if len(parts) > 0 else "00"
+            mm = parts[1].zfill(2) if len(parts) > 1 else "00"
+            return hh, mm
 
     # -------------------------------------------------------------
     # Frosted Glass Album Art Generator & Accent Extractor
@@ -2872,18 +2904,16 @@ class DynamicIslandWidget(QWidget):
         painter.restore()
 
         # Stacked Digital Clock
-        time_parts = self._time_str.split(" ")[0].split(":")
-        hh = time_parts[0] if len(time_parts) > 0 else "12"
-        mm = time_parts[1] if len(time_parts) > 1 else "00"
+        hh, mm = self._get_24h_time_parts()
 
+        col_hr, col_min = self._get_time_colors()
         painter.save()
-        painter.setFont(get_subtext_font(9.0))
-        painter.setPen(COLOR_TEXT_PRIMARY)
-        painter.drawText(QRectF(v_arm_x, clock_y, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, hh)
+        painter.setFont(get_display_font(11.0))
+        painter.setPen(col_hr)
+        painter.drawText(QRectF(v_arm_x, clock_y, arm_w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
 
-        painter.setFont(get_subtext_font(8.5))
-        painter.setPen(QColor(255, 255, 255, 175))
-        painter.drawText(QRectF(v_arm_x, clock_y + 11.5, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, mm)
+        painter.setPen(col_min)
+        painter.drawText(QRectF(v_arm_x, clock_y + 13.5, arm_w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
         painter.restore()
 
         painter.restore()
@@ -2951,18 +2981,16 @@ class DynamicIslandWidget(QWidget):
             # Bottom ear curve starts at h - r_ear (h - 18.0).
             # Placing clock_y at h - 58.0 ensures hh and mm are in the full-width parallel section.
             clock_y = h - 58.0
-            time_parts = self._time_str.split(" ")[0].split(":")
-            hh = time_parts[0] if len(time_parts) > 0 else "12"
-            mm = time_parts[1] if len(time_parts) > 1 else "00"
+            hh, mm = self._get_24h_time_parts()
 
+            col_hr, col_min = self._get_time_colors()
             painter.save()
-            painter.setFont(get_subtext_font(10.0))
-            painter.setPen(COLOR_TEXT_PRIMARY)
-            painter.drawText(QRectF(0, clock_y, w, 13.0), Qt.AlignmentFlag.AlignCenter, hh)
+            painter.setFont(get_display_font(11.5))
+            painter.setPen(col_hr)
+            painter.drawText(QRectF(0, clock_y, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
 
-            painter.setFont(get_subtext_font(9.5))
-            painter.setPen(QColor(255, 255, 255, 195))
-            painter.drawText(QRectF(0, clock_y + 13.0, w, 13.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(0, clock_y + 14.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
             painter.restore()
 
             # ── 2. Middle: Vertical 12-Band Audio Spectrum Visualizer ─
@@ -3011,17 +3039,16 @@ class DynamicIslandWidget(QWidget):
 
         else:
             # ── Idle Mode: Vertical Stacked Clock & Battery Indicator ──
-            time_parts = self._time_str.split(" ")[0].split(":")
-            hh = time_parts[0] if len(time_parts) > 0 else "12"
-            mm = time_parts[1] if len(time_parts) > 1 else "00"
+            hh, mm = self._get_24h_time_parts()
 
+            col_hr, col_min = self._get_time_colors()
             painter.save()
-            t_font = get_subtext_font(10.0)
+            t_font = get_display_font(12.0)
             painter.setFont(t_font)
-            painter.setPen(COLOR_TEXT_PRIMARY)
-            painter.drawText(QRectF(0, r_ear + 6.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
-            painter.setPen(QColor(255, 255, 255, 185))
-            painter.drawText(QRectF(0, r_ear + 20.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.setPen(col_hr)
+            painter.drawText(QRectF(0, r_ear + 6.0, w, 15.0), Qt.AlignmentFlag.AlignCenter, hh)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(0, r_ear + 21.0, w, 15.0), Qt.AlignmentFlag.AlignCenter, mm)
 
             # Minimal ambient dot ladder in center
             center_x = w / 2.0
@@ -3073,30 +3100,33 @@ class DynamicIslandWidget(QWidget):
             content_left = 14.0
             content_right = w - 14.0
 
-        # ── Left: Time ───────────────────────────────────────────
-        time_parts = self._time_str.split(" ")
-        hhmm = time_parts[0]
-        ampm = time_parts[1] if len(time_parts) > 1 else ""
+        # ── Left: Time (24-hour) ─────────────────────────────────
+        hh, mm = self._get_24h_time_parts()
+        col_hr, col_min = self._get_time_colors()
 
-        # Draw HH:MM using QRectF for subpixel-accurate vertical centering
-        time_font = get_display_font(10.5)
+        time_font = get_display_font(11.0)
         painter.setFont(time_font)
-        painter.setPen(COLOR_TEXT_PRIMARY)
         fm_time = QFontMetrics(time_font)
-        tw = fm_time.horizontalAdvance(hhmm)
-
         text_h = fm_time.height()
-        time_rect = QRectF(content_left, (h - text_h) / 2.0, tw + 2.0, text_h)
-        painter.drawText(time_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, hhmm)
+        y_text = (h - text_h) / 2.0
 
-        # Draw AM/PM suffix
-        ampm_font = get_microlabel_font()
-        painter.setFont(ampm_font)
-        painter.setPen(COLOR_TEXT_MUTED)
-        fm_ampm = QFontMetrics(ampm_font)
-        ampm_w = fm_ampm.horizontalAdvance(ampm)
-        ampm_rect = QRectF(content_left + tw + 3.0, (h - fm_ampm.height()) / 2.0, ampm_w + 2.0, fm_ampm.height())
-        painter.drawText(ampm_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ampm)
+        hh_w = fm_time.horizontalAdvance(hh)
+        painter.setPen(col_hr)
+        painter.drawText(QRectF(content_left, y_text, hh_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, hh)
+
+        cur_x = content_left + hh_w
+        if mm:
+            colon_w = fm_time.horizontalAdvance(":")
+            painter.setPen(QColor(255, 255, 255, 140))
+            painter.drawText(QRectF(cur_x, y_text, colon_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ":")
+            cur_x += colon_w
+
+            mm_w = fm_time.horizontalAdvance(mm)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(cur_x, y_text, mm_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, mm)
+            cur_x += mm_w
+
+        tw = cur_x - content_left
 
         has_media = bool(self._media_info.get("has_media", False))
         if not has_media:
@@ -3126,7 +3156,7 @@ class DynamicIslandWidget(QWidget):
             art_h = 20.0
             art_rad = 5.0
 
-        art_x = content_left + tw + ampm_w + 10.0
+        art_x = content_left + tw + 10.0
         art_y = (h - art_h) / 2.0
         art_rect = QRectF(art_x, art_y, art_w, art_h)
 

@@ -95,6 +95,10 @@ class MediaService(QObject):
         self._mock_position = 45
         self._last_state: Dict[str, Any] = {}
         self._last_art_signature = ""
+        self._current_track_key = ""
+        self._current_art_hash = ""
+        self._prev_art_hash = ""
+        self._track_change_time = 0.0
         self._active_session_id: Optional[str] = None
         self._last_playing_time = 0.0
         self._skip_grace_until = 0.0
@@ -171,7 +175,9 @@ class MediaService(QObject):
                     pass
 
             now = time.time()
-            if now - last_poll >= poll_interval:
+            in_transition = (now - getattr(self, "_track_change_time", 0.0)) < 3.5
+            current_interval = 0.2 if in_transition else poll_interval
+            if now - last_poll >= current_interval:
                 last_poll = now
                 if self._mock_mode or manager is None:
                     if self._mock_mode:
@@ -313,30 +319,50 @@ class MediaService(QObject):
             except Exception:
                 pass
 
-            # Extract Album Artwork (track-specific hashed filename to prevent stale caching)
-            art_path = None
-            art_signature = f"{title}_{artist}_{album}"
-            art_hash = hashlib.md5(art_signature.encode("utf-8", errors="ignore")).hexdigest()[:10]
-            cache_file = os.path.join(COVERS_DIR, f"cover_{art_hash}.jpg")
+            # Track change detection
+            track_key = f"{title}||{artist}"
+            if track_key != self._current_track_key:
+                self._prev_art_hash = self._current_art_hash
+                self._current_track_key = track_key
+                self._track_change_time = time.time()
 
+            # Extract Album Artwork using content-based hashing
+            art_path = None
             if props and getattr(props, "thumbnail", None) and streams:
                 try:
-                    if not os.path.exists(cache_file):
-                        stream = await props.thumbnail.open_read_async()
-                        if stream and stream.size > 0:
-                            reader = streams.DataReader(stream)
-                            await reader.load_async(stream.size)
-                            buf = bytearray(stream.size)
-                            reader.read_bytes(buf)
-                            with open(cache_file, "wb") as f:
-                                f.write(buf)
-                    if os.path.exists(cache_file):
-                        art_path = cache_file
+                    stream = await props.thumbnail.open_read_async()
+                    if stream and stream.size > 0:
+                        reader = streams.DataReader(stream)
+                        await reader.load_async(stream.size)
+                        buf = bytearray(stream.size)
+                        reader.read_bytes(buf)
+                        if buf:
+                            buf_hash = hashlib.md5(buf).hexdigest()[:12]
+                            # Detect whether stream is lagging behind from previous song during transition
+                            is_lagging = (
+                                buf_hash == self._prev_art_hash and
+                                bool(self._prev_art_hash) and
+                                (time.time() - self._track_change_time < 3.0)
+                            )
+                            if not is_lagging:
+                                self._current_art_hash = buf_hash
+                                art_file = os.path.join(COVERS_DIR, f"art_{buf_hash}.jpg")
+                                if not os.path.exists(art_file):
+                                    with open(art_file, "wb") as f:
+                                        f.write(buf)
+                                art_path = art_file
+                            elif self._current_art_hash and self._current_art_hash != self._prev_art_hash:
+                                art_file = os.path.join(COVERS_DIR, f"art_{self._current_art_hash}.jpg")
+                                if os.path.exists(art_file):
+                                    art_path = art_file
                 except Exception:
-                    if os.path.exists(cache_file):
-                        art_path = cache_file
-            elif os.path.exists(cache_file):
-                art_path = cache_file
+                    pass
+
+            # Fallback if thumbnail stream temporarily unavailable but we already have valid art for this track
+            if not art_path and self._current_art_hash and (time.time() - self._track_change_time >= 3.0):
+                art_file = os.path.join(COVERS_DIR, f"art_{self._current_art_hash}.jpg")
+                if os.path.exists(art_file):
+                    art_path = art_file
 
             # Video vs Music Classification
             playback_type_int = 0

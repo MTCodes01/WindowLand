@@ -116,7 +116,7 @@ class SystemService(QObject):
 
     def _on_clock_tick(self):
         now = datetime.datetime.now()
-        time_str = now.strftime("%I:%M %p").lstrip("0")
+        time_str = now.strftime("%H:%M")
         date_str = now.strftime("%a, %b %d")
         self.time_tick.emit(time_str, date_str)
 
