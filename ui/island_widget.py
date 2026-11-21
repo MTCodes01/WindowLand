@@ -569,6 +569,8 @@ class DynamicIslandWidget(QWidget):
         self._mini_eq_heights = [0.2, 0.4, 0.6, 0.3]
         self._mini_eq_phase = 0.0
         self._mini_eq_peak = 0.0
+        self._vertical_eq_heights = [0.15] * 12
+        self._corner_eq_heights = self._vertical_eq_heights
 
         # Animation & Physics
         self._geo_animation: Optional[QPropertyAnimation] = None
@@ -1870,6 +1872,26 @@ class DynamicIslandWidget(QWidget):
                             t = targets[idx]
                             lerp_spd = 0.82 if t > self._mini_eq_heights[idx] else 0.22
                             self._mini_eq_heights[idx] += (t - self._mini_eq_heights[idx]) * lerp_spd
+
+                        # 12 vertical spectrum bands for corner and side modes
+                        vert_slices = [
+                            (0, 2), (2, 3), (3, 5), (5, 7), (7, 9),
+                            (9, 11), (11, 13), (13, 15), (15, 17), (17, 19),
+                            (19, 21), (21, 22)
+                        ]
+                        vert_targets = []
+                        for s_start, s_end in vert_slices:
+                            sub = bands[s_start:s_end]
+                            val = max(sub) if sub else 0.0
+                            vert_targets.append(max(0.12, min(1.0, 0.08 + (val * eq_gain) * 0.92)))
+
+                        if not hasattr(self, "_vertical_eq_heights") or len(self._vertical_eq_heights) != 12:
+                            self._vertical_eq_heights = [0.15] * 12
+                        for idx in range(12):
+                            ct = vert_targets[idx]
+                            c_lerp = 0.85 if ct > self._vertical_eq_heights[idx] else 0.20
+                            self._vertical_eq_heights[idx] += (ct - self._vertical_eq_heights[idx]) * c_lerp
+                        self._corner_eq_heights = self._vertical_eq_heights
                 except Exception:
                     has_real_bands = False
 
@@ -1880,6 +1902,13 @@ class DynamicIslandWidget(QWidget):
                 self._mini_eq_heights[1] = 0.24 + 0.18 * abs(math.sin(self._mini_eq_phase * 1.3 + 1.0))
                 self._mini_eq_heights[2] = 0.22 + 0.16 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
                 self._mini_eq_heights[3] = 0.18 + 0.14 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
+
+                if not hasattr(self, "_vertical_eq_heights") or len(self._vertical_eq_heights) != 12:
+                    self._vertical_eq_heights = [0.15] * 12
+                for idx in range(12):
+                    wave = 0.16 + 0.14 * abs(math.sin(self._mini_eq_phase * (0.8 + idx * 0.15) + idx * 0.6))
+                    self._vertical_eq_heights[idx] += (wave - self._vertical_eq_heights[idx]) * 0.15
+                self._corner_eq_heights = self._vertical_eq_heights
 
         # Liquid morphing interpolation (lerp factor 0.18 for viscous fluid morphing)
         lerp_morph = 0.18
@@ -2788,43 +2817,65 @@ class DynamicIslandWidget(QWidget):
         if not is_bottom:
             v_start_y = arm_h + 8.0
             v_end_y = h - 18.0
+            clock_y = v_end_y - 28.0
+            eq_area_top = v_start_y + 4.0
+            eq_area_bottom = clock_y - 8.0
         else:
             v_start_y = 18.0
             v_end_y = h - arm_h - 8.0
+            clock_y = v_start_y + 4.0
+            eq_area_top = clock_y + 28.0 + 8.0
+            eq_area_bottom = v_end_y - 4.0
 
         v_arm_h = max(10.0, v_end_y - v_start_y)
 
-        # Real-time WASAPI Spectrum EQ
-        eq_bars = getattr(self, "_mini_eq_heights", [0.4, 0.7, 0.5, 0.3])
-        bar_w = 2.5
-        bar_gap = 2.0
-        num_bars = min(4, len(eq_bars))
-        eq_total_w = num_bars * bar_w + (num_bars - 1) * bar_gap
-        eq_start_x = v_arm_x + (arm_w - eq_total_w) / 2.0
-        max_bar_h = 36.0
-        eq_center_y = v_start_y + 24.0
+        # Real-time WASAPI Spectrum EQ - Vertical stack running down side arm
+        eq_bars = getattr(self, "_corner_eq_heights", [0.4, 0.6, 0.7, 0.5, 0.3, 0.5, 0.7, 0.6, 0.4, 0.2])
+        num_v_bars = len(eq_bars)
+        bar_h = 2.5
+        bar_gap = 3.2
+        total_v_h = num_v_bars * bar_h + (num_v_bars - 1) * bar_gap
+        eq_h_avail = max(total_v_h, eq_area_bottom - eq_area_top)
+        start_y = eq_area_top + (eq_h_avail - total_v_h) / 2.0
+        center_x = v_arm_x + arm_w / 2.0
+        min_w = 4.0
+        max_w = arm_w - 12.0  # 24.0 px
+
+        accent_hex = self._media_info.get("accent_color", "#FFFFFF")
+        accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
+        # Studio tint blend
+        ar = int(255 * 0.75 + accent_col.red() * 0.25)
+        ag = int(255 * 0.75 + accent_col.green() * 0.25)
+        ab = int(255 * 0.75 + accent_col.blue() * 0.25)
 
         painter.save()
         painter.setPen(Qt.PenStyle.NoPen)
-        for i in range(num_bars):
-            lvl = eq_bars[i] if (has_media and is_playing and i < len(eq_bars)) else 0.12
-            bh = max(3.0, min(max_bar_h, lvl * max_bar_h))
-            bx = eq_start_x + i * (bar_w + bar_gap)
-            by = eq_center_y - bh / 2.0
+        for i in range(num_v_bars):
+            bar_idx = i if not is_bottom else (num_v_bars - 1 - i)
+            lvl = eq_bars[bar_idx] if (has_media and is_playing and bar_idx < len(eq_bars)) else 0.12
+            bw = max(min_w, min(max_w, min_w + lvl * (max_w - min_w)))
+            bx = center_x - bw / 2.0
+            by = start_y + i * (bar_h + bar_gap)
 
-            grad = QLinearGradient(bx, by, bx, by + bh)
-            grad.setColorAt(0.0, QColor(255, 255, 255, 245 if is_playing else 130))
-            grad.setColorAt(1.0, QColor(255, 255, 255, 110 if is_playing else 50))
-            painter.setBrush(QBrush(grad))
-            painter.drawRoundedRect(QRectF(bx, by, bar_w, bh), 1.25, 1.25)
+            if is_playing:
+                grad = QLinearGradient(bx, by, bx + bw, by)
+                a_edge = int(120 + 80 * lvl)
+                a_mid = int(180 + 75 * lvl)
+                grad.setColorAt(0.0, QColor(ar, ag, ab, a_edge))
+                grad.setColorAt(0.5, QColor(255, 255, 255, a_mid))
+                grad.setColorAt(1.0, QColor(ar, ag, ab, a_edge))
+                painter.setBrush(QBrush(grad))
+            else:
+                painter.setBrush(QBrush(QColor(255, 255, 255, 45)))
+
+            painter.drawRoundedRect(QRectF(bx, by, bw, bar_h), bar_h / 2.0, bar_h / 2.0)
         painter.restore()
 
-        # Stacked Digital Clock & Battery (below visualizer)
+        # Stacked Digital Clock
         time_parts = self._time_str.split(" ")[0].split(":")
         hh = time_parts[0] if len(time_parts) > 0 else "12"
         mm = time_parts[1] if len(time_parts) > 1 else "00"
 
-        clock_y = v_end_y - 28.0
         painter.save()
         painter.setFont(get_subtext_font(9.0))
         painter.setPen(COLOR_TEXT_PRIMARY)
@@ -2832,15 +2883,7 @@ class DynamicIslandWidget(QWidget):
 
         painter.setFont(get_subtext_font(8.5))
         painter.setPen(QColor(255, 255, 255, 175))
-        painter.drawText(QRectF(v_arm_x, clock_y + 12.0, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, mm)
-
-        # Battery dot indicator at the bezel tip
-        pct = self._battery_info.get("percent", 100)
-        dot_col = QColor("#34C759") if pct > 20 else QColor("#FF3B30")
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(dot_col))
-        dot_y = v_end_y + 6.0 if not is_bottom else v_start_y - 6.0
-        painter.drawEllipse(QPointF(v_arm_x + arm_w / 2.0, dot_y), 2.0, 2.0)
+        painter.drawText(QRectF(v_arm_x, clock_y + 11.5, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, mm)
         painter.restore()
 
         painter.restore()
@@ -2851,24 +2894,28 @@ class DynamicIslandWidget(QWidget):
     def _paint_compact_side(self, painter: QPainter, w: float, h: float):
         """
         Vertical Dynamic Pill UI for Screen Sides (Left / Right Bezels).
-        Vertically stacked proportions with top album squircle, real-time vertical
-        mini-EQ, and bottom time/battery readout.
+        Top: Album art squircle with glass specular rim.
+        Middle: Responsive vertical 12-band audio spectrum ladder.
+        Bottom: Crisp stacked digital clock (hh over mm), safely positioned above the bezel ear.
         """
         has_media = bool(self._media_info.get("has_media", False))
         is_playing = bool(self._media_info.get("is_playing", False))
 
+        base_r_ear = NOTCH_RADIUS_TOP  # 18.0
+        r_ear = base_r_ear
+
         if has_media:
-            # ── 1. Top: Album Art Squircle (20x20) ───────────────────
-            art_size = 20.0
+            # ── 1. Top: Album Art Squircle (22x22) ───────────────────
+            art_size = 22.0
             art_x = (w - art_size) / 2.0
-            art_y = 16.0
+            art_y = r_ear + 4.0  # 22.0 px
             art_rect = QRectF(art_x, art_y, art_size, art_size)
-            art_rad = 5.0
+            art_rad = 5.5
 
             painter.save()
-            art_path = QPainterPath()
-            art_path.addRoundedRect(art_rect, art_rad, art_rad)
-            painter.setClipPath(art_path)
+            art_clip = QPainterPath()
+            art_clip.addRoundedRect(art_rect, art_rad, art_rad)
+            painter.setClipPath(art_clip)
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
             if self._album_art_pixmap and not self._album_art_pixmap.isNull():
@@ -2881,48 +2928,89 @@ class DynamicIslandWidget(QWidget):
                     )
                 )
             else:
-                painter.fillRect(art_rect, QColor(25, 27, 36))
+                painter.fillRect(art_rect, QColor(22, 24, 30))
+                # Vinyl disc fallback
+                painter.setPen(QPen(QColor(255, 255, 255, 30), 1.0))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(art_rect.adjusted(2.0, 2.0, -2.0, -2.0))
+                painter.drawEllipse(art_rect.adjusted(4.5, 4.5, -4.5, -4.5))
+                painter.setBrush(QBrush(QColor(255, 45, 85, 220)))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawEllipse(QRectF(art_x + art_size / 2.0 - 2.0, art_y + art_size / 2.0 - 2.0, 4.0, 4.0))
+
+            # Glass specular rim over art
+            spec_grad = QLinearGradient(art_x, art_y, art_x + art_size, art_y + art_size)
+            spec_grad.setColorAt(0.0, QColor(255, 255, 255, 50))
+            spec_grad.setColorAt(0.6, QColor(255, 255, 255, 0))
+            painter.setPen(QPen(QBrush(spec_grad), 1.0))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(art_rect, art_rad, art_rad)
             painter.restore()
 
-            # ── 2. Middle: Real Audio Vertical Spectrum Bars ─────────
-            eq_bars = getattr(self, "_mini_eq_heights", [0.5, 0.8, 0.6, 0.4])
-            bar_w = 2.5
-            bar_gap = 2.0
-            total_eq_w = 4 * bar_w + 3 * bar_gap
-            start_x = (w - total_eq_w) / 2.0
-            max_bar_h = 32.0
-            center_y = h / 2.0
-
-            painter.save()
-            painter.setPen(Qt.PenStyle.NoPen)
-            for i in range(4):
-                lvl = eq_bars[i] if is_playing else 0.15
-                bh = max(3.0, min(max_bar_h, lvl * max_bar_h))
-                bx = start_x + i * (bar_w + bar_gap)
-                by = center_y - bh / 2.0
-
-                grad = QLinearGradient(bx, by, bx, by + bh)
-                grad.setColorAt(0.0, QColor(255, 255, 255, 240 if is_playing else 130))
-                grad.setColorAt(1.0, QColor(255, 255, 255, 120 if is_playing else 60))
-                painter.setBrush(QBrush(grad))
-                painter.drawRoundedRect(QRectF(bx, by, bar_w, bh), 1.25, 1.25)
-            painter.restore()
-
-            # ── 3. Bottom: Time Readout (stacked hh / mm) ────────────
+            # ── 3. Bottom: Stacked Digital Clock (Safely in straight pill body) ─
+            # Bottom ear curve starts at h - r_ear (h - 18.0).
+            # Placing clock_y at h - 58.0 ensures hh and mm are in the full-width parallel section.
+            clock_y = h - 58.0
             time_parts = self._time_str.split(" ")[0].split(":")
             hh = time_parts[0] if len(time_parts) > 0 else "12"
             mm = time_parts[1] if len(time_parts) > 1 else "00"
 
             painter.save()
-            t_font = get_microlabel_font()
-            painter.setFont(t_font)
-            painter.setPen(QColor(255, 255, 255, 180))
-            painter.drawText(QRectF(0, h - 30.0, w, 12.0), Qt.AlignmentFlag.AlignCenter, hh)
-            painter.drawText(QRectF(0, h - 18.0, w, 12.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.setFont(get_subtext_font(10.0))
+            painter.setPen(COLOR_TEXT_PRIMARY)
+            painter.drawText(QRectF(0, clock_y, w, 13.0), Qt.AlignmentFlag.AlignCenter, hh)
+
+            painter.setFont(get_subtext_font(9.5))
+            painter.setPen(QColor(255, 255, 255, 195))
+            painter.drawText(QRectF(0, clock_y + 13.0, w, 13.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.restore()
+
+            # ── 2. Middle: Vertical 12-Band Audio Spectrum Visualizer ─
+            eq_area_top = art_y + art_size + 12.0    # ~56.0
+            eq_area_bottom = clock_y - 12.0          # ~190.0
+            avail_h = max(30.0, eq_area_bottom - eq_area_top)
+
+            eq_bars = getattr(self, "_vertical_eq_heights", [0.4, 0.6, 0.7, 0.5, 0.3, 0.6, 0.8, 0.6, 0.5, 0.3, 0.2, 0.15])
+            num_v_bars = len(eq_bars)
+            bar_h = 3.0
+            bar_gap = 4.8
+            total_v_h = num_v_bars * bar_h + (num_v_bars - 1) * bar_gap  # ~88.8 px
+
+            start_y = eq_area_top + (avail_h - total_v_h) / 2.0
+            center_x = w / 2.0
+            min_w = 4.0
+            max_w = max(min_w, w - 10.0)  # ~22.0 px for w=32
+
+            accent_hex = self._media_info.get("accent_color", "#FFFFFF")
+            accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
+            ar = int(255 * 0.75 + accent_col.red() * 0.25)
+            ag = int(255 * 0.75 + accent_col.green() * 0.25)
+            ab = int(255 * 0.75 + accent_col.blue() * 0.25)
+
+            painter.save()
+            painter.setPen(Qt.PenStyle.NoPen)
+            for i in range(num_v_bars):
+                lvl = eq_bars[i] if (is_playing and i < len(eq_bars)) else 0.12
+                bw = max(min_w, min(max_w, min_w + lvl * (max_w - min_w)))
+                bx = center_x - bw / 2.0
+                by = start_y + i * (bar_h + bar_gap)
+
+                if is_playing:
+                    grad = QLinearGradient(bx, by, bx + bw, by)
+                    a_edge = int(120 + 80 * lvl)
+                    a_mid = int(180 + 75 * lvl)
+                    grad.setColorAt(0.0, QColor(ar, ag, ab, a_edge))
+                    grad.setColorAt(0.5, QColor(255, 255, 255, a_mid))
+                    grad.setColorAt(1.0, QColor(ar, ag, ab, a_edge))
+                    painter.setBrush(QBrush(grad))
+                else:
+                    painter.setBrush(QBrush(QColor(255, 255, 255, 45)))
+
+                painter.drawRoundedRect(QRectF(bx, by, bw, bar_h), bar_h / 2.0, bar_h / 2.0)
             painter.restore()
 
         else:
-            # ── Idle Mode: Vertical Stacked Clock & Battery ─────────
+            # ── Idle Mode: Vertical Stacked Clock & Battery Indicator ──
             time_parts = self._time_str.split(" ")[0].split(":")
             hh = time_parts[0] if len(time_parts) > 0 else "12"
             mm = time_parts[1] if len(time_parts) > 1 else "00"
@@ -2931,13 +3019,25 @@ class DynamicIslandWidget(QWidget):
             t_font = get_subtext_font(10.0)
             painter.setFont(t_font)
             painter.setPen(COLOR_TEXT_PRIMARY)
-            painter.drawText(QRectF(0, 18.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
-            painter.setPen(QColor(255, 255, 255, 170))
-            painter.drawText(QRectF(0, 32.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.drawText(QRectF(0, r_ear + 6.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
+            painter.setPen(QColor(255, 255, 255, 185))
+            painter.drawText(QRectF(0, r_ear + 20.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
 
-            # Battery indicator at bottom
+            # Minimal ambient dot ladder in center
+            center_x = w / 2.0
+            mid_y = h / 2.0
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 40)))
+            for d in range(-3, 4):
+                painter.drawEllipse(QPointF(center_x, mid_y + d * 8.0), 1.5, 1.5)
+
+            # Battery indicator at bottom (safely above bottom ear)
             pct = self._battery_info.get("percent", 100)
-            painter.drawText(QRectF(0, h - 24.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, f"{pct}%")
+            b_font = get_microlabel_font()
+            painter.setFont(b_font)
+            dot_col = QColor("#34C759") if pct > 20 else QColor("#FF3B30")
+            painter.setPen(dot_col)
+            painter.drawText(QRectF(0, h - 38.0, w, 12.0), Qt.AlignmentFlag.AlignCenter, f"{pct}%")
             painter.restore()
 
     def _paint_compact_notch(self, painter: QPainter, w: float, h: float):
