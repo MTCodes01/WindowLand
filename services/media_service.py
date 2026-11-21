@@ -95,6 +95,9 @@ class MediaService(QObject):
         self._mock_position = 45
         self._last_state: Dict[str, Any] = {}
         self._last_art_signature = ""
+        self._active_session_id: Optional[str] = None
+        self._last_playing_time = 0.0
+        self._skip_grace_until = 0.0
 
     def start(self):
         if self._running:
@@ -187,6 +190,60 @@ class MediaService(QObject):
 
             await asyncio.sleep(0.1)
 
+    def _resolve_active_session(self, manager):
+        """
+        Intelligently resolves the active media session:
+        1. Prioritizes any session that is actively PLAYING.
+        2. Applies hysteresis during track skips so background media doesn't flicker in.
+        3. Sticks to the active session rather than fluctuating to idle browser tabs.
+        """
+        if not manager:
+            return None
+        try:
+            sessions = list(manager.get_sessions())
+            if not sessions:
+                cur = manager.get_current_session()
+                if cur:
+                    self._active_session_id = cur.source_app_user_model_id
+                return cur
+
+            now = time.time()
+
+            # 1. Look for any session that is actively PLAYING
+            for s in sessions:
+                try:
+                    pb = s.get_playback_info()
+                    status = getattr(pb, "playback_status", 0)
+                    if int(status) == 4:  # PLAYING
+                        self._active_session_id = s.source_app_user_model_id
+                        self._last_playing_time = now
+                        return s
+                except Exception:
+                    pass
+
+            # 2. Skip grace window: keep showing the active session during track change
+            in_grace = (now < self._skip_grace_until) or (now - self._last_playing_time < 2.2)
+            if in_grace and self._active_session_id:
+                for s in sessions:
+                    try:
+                        if s.source_app_user_model_id == self._active_session_id:
+                            return s
+                    except Exception:
+                        pass
+
+            # 3. Fallback to system default or first session
+            cur = manager.get_current_session()
+            if cur:
+                self._active_session_id = cur.source_app_user_model_id
+                return cur
+            self._active_session_id = sessions[0].source_app_user_model_id
+            return sessions[0]
+        except Exception:
+            try:
+                return manager.get_current_session()
+            except Exception:
+                return None
+
     async def _poll_windows_media(self, manager):
         if manager is None:
             state = {
@@ -204,7 +261,7 @@ class MediaService(QObject):
             return
 
         try:
-            current_session = manager.get_current_session()
+            current_session = self._resolve_active_session(manager)
             if current_session is None:
                 state = {
                     "has_media": False,
@@ -336,93 +393,93 @@ class MediaService(QObject):
         except Exception:
             pass
 
+    def _send_media_key(self, vk_code: int):
+        try:
+            import ctypes
+            ctypes.windll.user32.keybd_event(vk_code, 0, 0, 0)
+            ctypes.windll.user32.keybd_event(vk_code, 0, 2, 0)
+        except Exception:
+            pass
+
     async def _handle_toggle(self, manager):
-        if self._mock_mode or manager is None:
+        if self._mock_mode:
             self._mock_playing = not self._mock_playing
             self._emit_mock_state()
             return
 
-        try:
-            cur = manager.get_current_session()
-            if cur:
-                await cur.try_toggle_play_pause_async()
-                await asyncio.sleep(0.12)
-                await self._poll_windows_media(manager)
-            else:
-                self._mock_mode = True
-                self._mock_playing = True
-                self._emit_mock_state()
-        except Exception:
-            self._mock_mode = True
-            self._mock_playing = not self._mock_playing
-            self._emit_mock_state()
+        cur = self._resolve_active_session(manager)
+        success = False
+        if cur:
+            try:
+                success = await cur.try_toggle_play_pause_async()
+            except Exception:
+                success = False
+
+        if not success:
+            self._send_media_key(0xB3)  # VK_MEDIA_PLAY_PAUSE
+
+        await asyncio.sleep(0.12)
+        await self._poll_windows_media(manager)
 
     async def _handle_next(self, manager):
-        if self._mock_mode or manager is None:
+        self._skip_grace_until = time.time() + 2.5
+        if self._mock_mode:
             self._mock_index = (self._mock_index + 1) % len(MOCK_PLAYLIST)
             self._mock_position = 0
             self._emit_mock_state()
             return
 
-        try:
-            cur = manager.get_current_session()
-            if cur:
-                await cur.try_skip_next_async()
-                await asyncio.sleep(0.2)
-                await self._poll_windows_media(manager)
-            else:
-                self._mock_mode = True
-                self._mock_index = (self._mock_index + 1) % len(MOCK_PLAYLIST)
-                self._mock_position = 0
-                self._emit_mock_state()
-        except Exception:
-            self._mock_mode = True
-            self._mock_index = (self._mock_index + 1) % len(MOCK_PLAYLIST)
-            self._mock_position = 0
-            self._emit_mock_state()
+        cur = self._resolve_active_session(manager)
+        success = False
+        if cur:
+            try:
+                success = await cur.try_skip_next_async()
+            except Exception:
+                success = False
+
+        if not success:
+            self._send_media_key(0xB0)  # VK_MEDIA_NEXT_TRACK
+
+        await asyncio.sleep(0.2)
+        await self._poll_windows_media(manager)
 
     async def _handle_prev(self, manager):
-        if self._mock_mode or manager is None:
+        self._skip_grace_until = time.time() + 2.5
+        if self._mock_mode:
             self._mock_index = (self._mock_index - 1) % len(MOCK_PLAYLIST)
             self._mock_position = 0
             self._emit_mock_state()
             return
 
-        try:
-            cur = manager.get_current_session()
-            if cur:
-                await cur.try_skip_previous_async()
-                await asyncio.sleep(0.2)
-                await self._poll_windows_media(manager)
-            else:
-                self._mock_mode = True
-                self._mock_index = (self._mock_index - 1) % len(MOCK_PLAYLIST)
-                self._mock_position = 0
-                self._emit_mock_state()
-        except Exception:
-            self._mock_mode = True
-            self._mock_index = (self._mock_index - 1) % len(MOCK_PLAYLIST)
-            self._mock_position = 0
-            self._emit_mock_state()
+        cur = self._resolve_active_session(manager)
+        success = False
+        if cur:
+            try:
+                success = await cur.try_skip_previous_async()
+            except Exception:
+                success = False
+
+        if not success:
+            self._send_media_key(0xB1)  # VK_MEDIA_PREV_TRACK
+
+        await asyncio.sleep(0.2)
+        await self._poll_windows_media(manager)
 
     async def _handle_seek(self, manager, pos_sec: float):
-        if self._mock_mode or manager is None:
+        if self._mock_mode:
             self._mock_position = max(0, int(pos_sec))
             self._emit_mock_state()
             return
 
-        try:
-            cur = manager.get_current_session()
-            if cur:
+        cur = self._resolve_active_session(manager)
+        if cur:
+            try:
                 ticks = int(pos_sec * 10_000_000)
                 await cur.try_change_playback_position_async(ticks)
                 await asyncio.sleep(0.1)
                 await self._poll_windows_media(manager)
-            else:
-                self._mock_position = max(0, int(pos_sec))
-                self._emit_mock_state()
-        except Exception:
-            self._mock_position = max(0, int(pos_sec))
+            except Exception:
+                pass
             self._emit_mock_state()
 
     def _emit_mock_state(self):

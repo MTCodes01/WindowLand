@@ -16,3 +16,6 @@ build/
 # Local temporary files
 assets/covers/live_cover.jpg
 reminders.json
+
+# dist
+dist/
