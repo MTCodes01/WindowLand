@@ -1879,7 +1879,8 @@ class DynamicIslandWidget(QWidget):
             if hasattr(self, "system_service"):
                 try:
                     bands, _ = self.system_service.get_audio_spectrum()
-                    if bands and len(bands) >= 22 and max(bands) > 0.005:
+                    max_b_val = max(bands) if bands else 0.0
+                    if bands and len(bands) >= 22 and max_b_val > 0.0004:
                         has_real_bands = True
                         # Real hardware multi-band frequency mapping:
                         b0 = max(bands[0:5])    # Sub-bass / Kick
@@ -1892,7 +1893,7 @@ class DynamicIslandWidget(QWidget):
                             self._mini_eq_peak += (max_b - self._mini_eq_peak) * 0.35
                         else:
                             self._mini_eq_peak += (max_b - self._mini_eq_peak) * 0.02
-                        eq_gain = 1.0 / max(0.12, min(1.0, self._mini_eq_peak))
+                        eq_gain = 1.0 / max(0.015, min(1.0, self._mini_eq_peak))
 
                         targets = [
                             max(0.15, min(1.0, 0.08 + (b0 * eq_gain) * 0.92)),
@@ -1928,18 +1929,18 @@ class DynamicIslandWidget(QWidget):
                     has_real_bands = False
 
             if not has_real_bands:
-                # Ambient fallback
-                self._mini_eq_phase += 0.15
-                self._mini_eq_heights[0] = 0.20 + 0.15 * abs(math.sin(self._mini_eq_phase))
-                self._mini_eq_heights[1] = 0.24 + 0.18 * abs(math.sin(self._mini_eq_phase * 1.3 + 1.0))
-                self._mini_eq_heights[2] = 0.22 + 0.16 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
-                self._mini_eq_heights[3] = 0.18 + 0.14 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
+                # Organic dynamic fallback when stream volume is low or in quiet passages
+                self._mini_eq_phase += 0.12
+                self._mini_eq_heights[0] = 0.25 + 0.55 * abs(math.sin(self._mini_eq_phase * 1.1))
+                self._mini_eq_heights[1] = 0.30 + 0.60 * abs(math.sin(self._mini_eq_phase * 1.4 + 1.2))
+                self._mini_eq_heights[2] = 0.28 + 0.58 * abs(math.cos(self._mini_eq_phase * 1.0 + 2.0))
+                self._mini_eq_heights[3] = 0.22 + 0.50 * abs(math.sin(self._mini_eq_phase * 1.6 + 0.5))
 
                 if not hasattr(self, "_vertical_eq_heights") or len(self._vertical_eq_heights) != 12:
                     self._vertical_eq_heights = [0.15] * 12
                 for idx in range(12):
-                    wave = 0.16 + 0.14 * abs(math.sin(self._mini_eq_phase * (0.8 + idx * 0.15) + idx * 0.6))
-                    self._vertical_eq_heights[idx] += (wave - self._vertical_eq_heights[idx]) * 0.15
+                    wave = 0.20 + 0.65 * abs(math.sin(self._mini_eq_phase * (0.75 + idx * 0.12) + idx * 0.55))
+                    self._vertical_eq_heights[idx] += (wave - self._vertical_eq_heights[idx]) * 0.25
                 self._corner_eq_heights = self._vertical_eq_heights
 
         # Liquid morphing interpolation (lerp factor 0.18 for viscous fluid morphing)
@@ -2871,7 +2872,7 @@ class DynamicIslandWidget(QWidget):
         start_y = eq_area_top + (eq_h_avail - total_v_h) / 2.0
         center_x = v_arm_x + arm_w / 2.0
         min_w = 4.0
-        max_w = arm_w - 12.0  # 24.0 px
+        max_w = arm_w - 8.0  # 28.0 px
 
         accent_hex = self._media_info.get("accent_color", "#FFFFFF")
         accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
@@ -3007,7 +3008,7 @@ class DynamicIslandWidget(QWidget):
             start_y = eq_area_top + (avail_h - total_v_h) / 2.0
             center_x = w / 2.0
             min_w = 4.0
-            max_w = max(min_w, w - 10.0)  # ~22.0 px for w=32
+            max_w = max(min_w, w - 8.0)  # ~24.0 px for w=32
 
             accent_hex = self._media_info.get("accent_color", "#FFFFFF")
             accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
