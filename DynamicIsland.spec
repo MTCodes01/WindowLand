@@ -13,6 +13,7 @@ a = Analysis(
         'services.audio_spectrum',
         'services.device_listener',
         'services.autostart_service',
+        'services.settings_service',
         'services.phone_bridge',
         'ui',
         'ui.styles',
