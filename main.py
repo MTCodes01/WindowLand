@@ -6,6 +6,10 @@ Main Entry Point, System Tray Icon, and Application Lifecycle.
 import sys
 import os
 import time
+import json
+import subprocess
+import tempfile
+import shutil
 import ctypes
 from ctypes import wintypes
 import traceback
@@ -47,15 +51,123 @@ if _kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
     _user32.PostMessageW(HWND_BROADCAST, WM_SHOW_DYNAMIC_ISLAND, 0, 0)
     sys.exit(0)
 
-# Unhandled Exception Safety Hook
+# -------------------------------------------------------------
+# Clean Residue & Temp Cache Pruner
+# -------------------------------------------------------------
+def _cleanup_temp_residue():
+    """
+    Cleans up stale PyInstaller temporary folders (_MEI*) left by previous
+    crashes or terminations, preventing decompression error code -1,
+    and prunes old cached covers.
+    """
+    try:
+        temp_dir = tempfile.gettempdir()
+        current_mei = getattr(sys, "_MEIPASS", "")
+        for item in os.listdir(temp_dir):
+            if item.startswith("_MEI"):
+                full_path = os.path.join(temp_dir, item)
+                if current_mei and os.path.abspath(full_path) == os.path.abspath(current_mei):
+                    continue
+                try:
+                    # Clean folders older than 30 minutes
+                    if time.time() - os.path.getmtime(full_path) > 1800:
+                        shutil.rmtree(full_path, ignore_errors=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        covers_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "covers")
+        if os.path.exists(covers_dir):
+            now = time.time()
+            for f in os.listdir(covers_dir):
+                if f.startswith("art_") or f.startswith("cover_"):
+                    fp = os.path.join(covers_dir, f)
+                    if now - os.path.getmtime(fp) > 7 * 86400:
+                        try:
+                            os.remove(fp)
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+
+
+# -------------------------------------------------------------
+# Self-Healing Crash Guard & Auto-Recovery Engine
+# -------------------------------------------------------------
+CRASH_GUARD_FILE = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "WindowLand", "crash_guard.json")
+
+
+def _record_crash_and_check_recovery() -> bool:
+    """Limits auto-recovery to at most 3 restarts within 60s to prevent rapid crash loops."""
+    now = time.time()
+    crashes = []
+    try:
+        if os.path.exists(CRASH_GUARD_FILE):
+            with open(CRASH_GUARD_FILE, "r", encoding="utf-8") as f:
+                crashes = json.load(f)
+    except Exception:
+        crashes = []
+
+    crashes = [t for t in crashes if now - t < 60.0]
+    crashes.append(now)
+
+    try:
+        os.makedirs(os.path.dirname(CRASH_GUARD_FILE), exist_ok=True)
+        with open(CRASH_GUARD_FILE, "w", encoding="utf-8") as f:
+            json.dump(crashes, f)
+    except Exception:
+        pass
+
+    return len(crashes) <= 3
+
+
+def _respawn_self():
+    """Spawns a clean new instance of the application detached from the dying process."""
+    global _mutex_handle
+    if _mutex_handle:
+        try:
+            _kernel32.ReleaseMutex(_mutex_handle)
+            _kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+        except Exception:
+            pass
+
+    try:
+        if getattr(sys, "frozen", False):
+            target = [sys.executable]
+        else:
+            target = [sys.executable, os.path.abspath(__file__)]
+
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(target, creationflags=flags, close_fds=True)
+    except Exception as e:
+        log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+        try:
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"Failed to auto-recover/respawn: {e}\n")
+        except Exception:
+            pass
+
+
 def _exception_hook(exctype, value, tb):
     err_str = "".join(traceback.format_exception(exctype, value, tb))
     log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
     try:
         with open(log_file, "a", encoding="utf-8") as f:
-            f.write(f"\n--- {time.ctime()} ---\n{err_str}\n")
+            f.write(f"\n--- CRASH {time.ctime()} ---\n{err_str}\n")
     except Exception:
         pass
+
+    # Self-healing auto-recovery
+    if _record_crash_and_check_recovery():
+        _respawn_self()
+
+    os._exit(1)
+
 
 sys.excepthook = _exception_hook
 
@@ -147,13 +259,21 @@ def main():
     )
     app.setFont(default_font)
 
+    # Clean stale temp residue from previous sessions to prevent decompression conflicts
+    _cleanup_temp_residue()
+
     media_service = MediaService()
     system_service = SystemService()
     device_service = DeviceService()
     phone_service = PhoneBridgeService(port=54321)
 
     island = DynamicIslandWidget(media_service, system_service, device_service)
-    # Always present on launch: smoothly sit flush at top screen bezel in compact mode
+
+    # Restore user settings (position, screen, dock edge, theme, auto-hide)
+    from services.settings_service import settings
+    saved_cfg = settings.load()
+    island.apply_saved_settings(saved_cfg)
+
     island.show()
     island.raise_()
     island.set_island_state("compact")
@@ -251,6 +371,7 @@ def main():
         island._dock_ratio_x = 0.5
         island._dock_ratio_y = 0.5
         island._apply_geometry_for_state(island._island_state, animate=True)
+        island.save_current_settings()
         island.update()
 
     act_recenter = QAction("Recenter to Top Bezel", tray_menu)
@@ -417,12 +538,43 @@ def main():
     act_dock_center.triggered.connect(lambda: set_dock("top"))
     menu_dock.addAction(act_dock_center)
 
+    # Sync dock menu selection with saved settings
+    dock_map = {
+        "top": act_dock_top,
+        "bottom": act_dock_bottom,
+        "left": act_dock_left,
+        "right": act_dock_right,
+        "top-left": act_dock_tl,
+        "corner-tl": act_dock_tl,
+        "top-right": act_dock_tr,
+        "corner-tr": act_dock_tr,
+        "bottom-left": act_dock_bl,
+        "corner-bl": act_dock_bl,
+        "bottom-right": act_dock_br,
+        "corner-br": act_dock_br,
+        "floating": act_dock_floating,
+    }
+    cur_edge = saved_cfg.get("dock_edge", "top")
+    if cur_edge in dock_map:
+        dock_map[cur_edge].setChecked(True)
+
+    # Sync theme menu selection with saved settings
+    saved_theme = saved_cfg.get("theme_mode", "ambient")
+    if saved_theme == "ambient":
+        act_mode_ambient.setChecked(True)
+    elif saved_theme in ("obsidian", "solid"):
+        col_str = str(saved_cfg.get("solid_color", "#08080C")).upper()
+        if col_str == "#181A22":
+            act_mode_titanium.setChecked(True)
+        else:
+            act_mode_obsidian.setChecked(True)
+
     tray_menu.addSeparator()
 
     # ── 4. Preferences ───────────────────────────────────────────
     act_autohide = QAction("Auto-Hide when Idle", tray_menu)
     act_autohide.setCheckable(True)
-    act_autohide.setChecked(False)
+    act_autohide.setChecked(saved_cfg.get("auto_hide", False))
     act_autohide.toggled.connect(island.toggle_auto_hide)
     tray_menu.addAction(act_autohide)
 
@@ -531,11 +683,48 @@ def main():
 
     act_quit = QAction("Quit WindowLand", tray_menu)
     def on_quit():
-        media_service.stop()
-        system_service.stop()
-        device_service.stop()
-        phone_service.stop()
-        app.quit()
+        try:
+            island.save_current_settings()
+        except Exception:
+            pass
+        try:
+            media_service.stop()
+        except Exception:
+            pass
+        try:
+            system_service.stop()
+        except Exception:
+            pass
+        try:
+            device_service.stop()
+        except Exception:
+            pass
+        try:
+            phone_service.stop()
+        except Exception:
+            pass
+
+        global _mutex_handle
+        if _mutex_handle:
+            try:
+                _kernel32.ReleaseMutex(_mutex_handle)
+                _kernel32.CloseHandle(_mutex_handle)
+                _mutex_handle = None
+            except Exception:
+                pass
+
+        try:
+            _cleanup_temp_residue()
+        except Exception:
+            pass
+
+        try:
+            app.quit()
+        except Exception:
+            pass
+
+        os._exit(0)
+
     act_quit.triggered.connect(on_quit)
     tray_menu.addAction(act_quit)
 
@@ -553,10 +742,7 @@ def main():
         3000
     )
 
-    app.aboutToQuit.connect(media_service.stop)
-    app.aboutToQuit.connect(system_service.stop)
-    app.aboutToQuit.connect(device_service.stop)
-    app.aboutToQuit.connect(phone_service.stop)
+    app.aboutToQuit.connect(on_quit)
 
     sys.exit(app.exec())
 

@@ -14,9 +14,10 @@ import os
 import sys
 import math
 import time
+import datetime
 import ctypes
 from ctypes import wintypes
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from PIL import Image, ImageFilter, ImageEnhance
 
 from PyQt6.QtWidgets import (
@@ -64,6 +65,7 @@ from ui.components.visualizer import AudioVisualizerWidget
 from ui.device_popup import DeviceConnectionPopup
 from services.media_service import MediaService
 from services.system_service import SystemService
+from services.settings_service import settings
 
 
 def resource_path(relative_path: str) -> str:
@@ -238,6 +240,26 @@ class CoverArtWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        try:
+            self._do_paint(event)
+        except Exception:
+            try:
+                import traceback
+                err = traceback.format_exc()
+                log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- PAINT GLITCH CAUGHT {time.ctime()} ---\n{err}\n")
+            except Exception:
+                pass
+            try:
+                p = QPainter(self)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                p.fillRect(0, 0, self.width(), self.height(), QColor(10, 10, 14, 240))
+                p.end()
+            except Exception:
+                pass
+
+    def _do_paint(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
@@ -367,6 +389,26 @@ class TimelineScrubber(QWidget):
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
+        try:
+            self._do_paint(event)
+        except Exception:
+            try:
+                import traceback
+                err = traceback.format_exc()
+                log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- PAINT GLITCH CAUGHT {time.ctime()} ---\n{err}\n")
+            except Exception:
+                pass
+            try:
+                p = QPainter(self)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                p.fillRect(0, 0, self.width(), self.height(), QColor(10, 10, 14, 240))
+                p.end()
+            except Exception:
+                pass
+
+    def _do_paint(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -430,6 +472,26 @@ class VectorMediaButton(QPushButton):
             self.update()
 
     def paintEvent(self, event):
+        try:
+            self._do_paint(event)
+        except Exception:
+            try:
+                import traceback
+                err = traceback.format_exc()
+                log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- PAINT GLITCH CAUGHT {time.ctime()} ---\n{err}\n")
+            except Exception:
+                pass
+            try:
+                p = QPainter(self)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                p.fillRect(0, 0, self.width(), self.height(), QColor(10, 10, 14, 240))
+                p.end()
+            except Exception:
+                pass
+
+    def _do_paint(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -580,7 +642,7 @@ class DynamicIslandWidget(QWidget):
         self._hovered = False
 
         # Current Data Cache
-        self._time_str = "12:37 PM"
+        self._time_str = "12:37"
         self._date_str = "Today"
         self._media_info: Dict[str, Any] = {
             "has_media": False,
@@ -885,7 +947,7 @@ class DynamicIslandWidget(QWidget):
             x = int(center_x - w / 2)
             x = max(int(screen_geo.left()), min(int(screen_geo.right() - w), x))
             if getattr(self, "_auto_hide_enabled", False) and state == "compact" and not self._hovered:
-                # 4px translucent tab handle at y = 0
+                # 4px translucent tab handle at screen edge
                 y = int(screen_geo.top() - h + 4)
             else:
                 y = int(screen_geo.top())
@@ -894,16 +956,25 @@ class DynamicIslandWidget(QWidget):
             center_x = screen_geo.x() + screen_geo.width() * ratio_x
             x = int(center_x - w / 2)
             x = max(int(screen_geo.left()), min(int(screen_geo.right() - w), x))
-            y = int(screen_geo.bottom() - h + 1)
+            if getattr(self, "_auto_hide_enabled", False) and state == "compact" and not self._hovered:
+                y = int(screen_geo.bottom() - 4)
+            else:
+                y = int(screen_geo.bottom() - h + 1)
 
         elif edge == "left":
-            x = int(screen_geo.left())
+            if getattr(self, "_auto_hide_enabled", False) and state == "compact" and not self._hovered:
+                x = int(screen_geo.left() - w + 4)
+            else:
+                x = int(screen_geo.left())
             center_y = screen_geo.y() + screen_geo.height() * ratio_y
             y = int(center_y - h / 2)
             y = max(int(screen_geo.top()), min(int(screen_geo.bottom() - h), y))
 
         elif edge == "right":
-            x = int(screen_geo.right() - w + 1)
+            if getattr(self, "_auto_hide_enabled", False) and state == "compact" and not self._hovered:
+                x = int(screen_geo.right() - 4)
+            else:
+                x = int(screen_geo.right() - w + 1)
             center_y = screen_geo.y() + screen_geo.height() * ratio_y
             y = int(center_y - h / 2)
             y = max(int(screen_geo.top()), min(int(screen_geo.bottom() - h), y))
@@ -940,8 +1011,8 @@ class DynamicIslandWidget(QWidget):
         self._expand_progress_val = max(0.0, min(1.0, float(val)))
         p = self._expand_progress_val
 
-        # Smooth cross-fade active child container from p=0.20 to 1.0
-        cont_op = max(0.0, min(1.0, (p - 0.20) / 0.80))
+        # Smooth cross-fade active child container from p=0.25 to 1.0
+        cont_op = max(0.0, min(1.0, (p - 0.25) / 0.75))
         for eff in (getattr(self, "_dashboard_opacity_effect", None),
                     getattr(self, "_side_opacity_effect", None),
                     getattr(self, "_corner_opacity_effect", None)):
@@ -955,18 +1026,23 @@ class DynamicIslandWidget(QWidget):
             getattr(self, "dashboard_container_side", None) if is_side else getattr(self, "dashboard_container", None)
         )
         if active_c is not None:
-            if p > 0.05 and not active_c.isVisible():
+            if p >= 0.25 and not active_c.isVisible():
                 active_c.show()
                 active_c.raise_()
-            elif p <= 0.05 and active_c.isVisible():
+            elif p < 0.25 and active_c.isVisible():
                 active_c.hide()
 
         self.update()
 
     expand_progress = pyqtProperty(float, get_expand_progress, set_expand_progress)
 
+    def _on_geo_anim_finished(self):
+        target = getattr(self, "_anim_target_state", self._island_state)
+        self._update_child_visibility(target)
+
     def _apply_geometry_for_state(self, state: str, animate=True):
         x, y, w, h = self._get_target_rect(state)
+        self._anim_target_state = state
 
         if not animate:
             self.setGeometry(x, y, w, h)
@@ -1001,7 +1077,12 @@ class DynamicIslandWidget(QWidget):
         if state == "expanded":
             self._update_child_visibility("expanded")
 
-        self._geo_animation.finished.connect(lambda: self._update_child_visibility(state))
+        try:
+            self._geo_animation.finished.disconnect()
+        except Exception:
+            pass
+        self._geo_animation.finished.connect(self._on_geo_anim_finished)
+
         self._geo_animation.start()
         self._expand_anim.start()
 
@@ -1038,31 +1119,41 @@ class DynamicIslandWidget(QWidget):
         is_corner = edge in ("top-left", "top-right", "bottom-left", "bottom-right", "corner-tl", "corner-tr", "corner-bl", "corner-br")
         is_side = edge in ("left", "right")
 
-        if is_corner:
-            m_top = 20
-            m_bot = 18
-            m_left = 16
-            m_right = 16
-        elif is_side:
-            m_top = 24
-            m_bot = 20
-            m_left = 14
-            m_right = 14
-        else:
-            m_top = int(NOTCH_RADIUS_TOP + 2) if edge == "top" else 10
-            m_bot = int(NOTCH_RADIUS_TOP + 2) if edge == "bottom" else 10
-            m_left = 16
-            m_right = 16
+        w = float(self.width())
+        h = float(self.height())
 
-        for c in (getattr(self, "dashboard_container", None),
-                  getattr(self, "dashboard_container_side", None),
-                  getattr(self, "dashboard_container_corner", None)):
+        if is_corner:
+            c = getattr(self, "dashboard_container_corner", None)
             if c is not None:
-                c.setGeometry(
-                    m_left, m_top,
-                    max(10, self.width() - m_left - m_right),
-                    max(10, self.height() - m_top - m_bot)
-                )
+                target_w = 252.0
+                target_h = 252.0
+                c_w = min(target_w, max(10.0, w - 28.0))
+                c_h = min(target_h, max(10.0, h - 28.0))
+                is_right = edge in ("top-right", "corner-tr", "bottom-right", "corner-br")
+                is_bottom = edge in ("bottom-left", "corner-bl", "bottom-right", "corner-br")
+                x = (w - 14.0 - c_w) if is_right else 14.0
+                y = (h - 14.0 - c_h) if is_bottom else 14.0
+                c.setGeometry(int(x), int(y), int(c_w), int(c_h))
+        elif is_side:
+            c = getattr(self, "dashboard_container_side", None)
+            if c is not None:
+                target_w = 202.0
+                target_h = 326.0
+                c_w = min(target_w, max(10.0, w - 28.0))
+                c_h = min(target_h, max(10.0, h - 44.0))
+                x = (w - 14.0 - c_w) if edge == "right" else 14.0
+                y = max(4.0, (h - c_h) / 2.0)
+                c.setGeometry(int(x), int(y), int(c_w), int(c_h))
+        else:
+            c = getattr(self, "dashboard_container", None)
+            if c is not None:
+                target_w = 428.0
+                target_h = 168.0
+                c_w = min(target_w, max(10.0, w - 32.0))
+                c_h = min(target_h, max(10.0, h - 32.0))
+                x = max(16.0, (w - c_w) / 2.0)
+                y = (h - 12.0 - c_h) if edge == "bottom" else (20.0 if edge == "top" else max(10.0, (h - c_h) / 2.0))
+                c.setGeometry(int(x), int(y), int(c_w), int(c_h))
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.ActivationChange:
@@ -1109,27 +1200,100 @@ class DynamicIslandWidget(QWidget):
     # -------------------------------------------------------------
     # Theme & Visual Customization Controls
     # -------------------------------------------------------------
-    def set_theme_ambient(self, opacity: float = 0.24):
+    def set_theme_ambient(self, opacity: float = 0.24, auto_save: bool = True):
         self._bg_style = "ambient"
         self._ambient_enabled = True
         self._ambient_opacity = opacity
         self.update()
+        if auto_save:
+            self.save_current_settings()
 
-    def set_theme_solid(self, color: QColor):
+    def set_theme_solid(self, color: QColor, auto_save: bool = True):
         self._bg_style = "solid"
         self._solid_color = QColor(color)
         self.update()
+        if auto_save:
+            self.save_current_settings()
 
-    def set_theme_gradient(self, color1: QColor, color2: QColor):
+    def set_theme_gradient(self, color1: QColor, color2: QColor, auto_save: bool = True):
         self._bg_style = "gradient"
         self._gradient_c1 = QColor(color1)
         self._gradient_c2 = QColor(color2)
         self.update()
+        if auto_save:
+            self.save_current_settings()
 
     def set_ambient_opacity(self, opacity: float):
         self._ambient_opacity = max(0.0, min(1.0, opacity))
         self._ambient_enabled = (self._ambient_opacity > 0.0)
         self.update()
+        self.save_current_settings()
+
+    def apply_saved_settings(self, cfg: dict):
+        """Restores dock position, edge, screen monitor, and theme cleanly from saved settings."""
+        if not cfg or not isinstance(cfg, dict):
+            return
+
+        edge = cfg.get("dock_edge", "top")
+        self._dock_edge = edge
+        self._target_morph = 1.0 if edge != "floating" else 0.0
+        self._dock_morph = self._target_morph
+        self._dock_ratio_x = float(cfg.get("dock_ratio_x", 0.5))
+        self._dock_ratio_y = float(cfg.get("dock_ratio_y", 0.5))
+        self._auto_hide_enabled = bool(cfg.get("auto_hide", False))
+
+        fx = cfg.get("floating_x", -1)
+        fy = cfg.get("floating_y", -1)
+        if fx >= 0 and fy >= 0:
+            self._floating_center = QPointF(float(fx), float(fy))
+
+        # Restore monitor/screen
+        screen_idx = int(cfg.get("screen_index", 0))
+        screens = QGuiApplication.screens()
+        if 0 <= screen_idx < len(screens):
+            s_geo = screens[screen_idx].geometry()
+            self.move(s_geo.center())
+
+        # Restore theme
+        theme_mode = cfg.get("theme_mode", "ambient")
+        if theme_mode == "ambient":
+            self.set_theme_ambient(float(cfg.get("ambient_opacity", 0.24)), auto_save=False)
+        elif theme_mode in ("obsidian", "titanium", "solid"):
+            col_hex = cfg.get("solid_color", "#08080C")
+            self.set_theme_solid(QColor(col_hex), auto_save=False)
+
+        self._apply_geometry_for_state(self._island_state, animate=False)
+        self.update()
+
+    def save_current_settings(self):
+        """Flushes the current position, screen, dock edge, and theme to persistent settings."""
+        try:
+            center = self.geometry().center()
+            screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
+            screens = QGuiApplication.screens()
+            screen_idx = screens.index(screen) if screen in screens else 0
+
+            bg_style = getattr(self, "_bg_style", "ambient")
+            solid_col = getattr(self, "_solid_color", QColor("#08080C"))
+            solid_hex = solid_col.name() if hasattr(solid_col, "name") else "#08080C"
+
+            updates = {
+                "dock_edge": getattr(self, "_dock_edge", "top"),
+                "dock_ratio_x": getattr(self, "_dock_ratio_x", 0.5),
+                "dock_ratio_y": getattr(self, "_dock_ratio_y", 0.5),
+                "screen_index": screen_idx,
+                "auto_hide": getattr(self, "_auto_hide_enabled", False),
+                "theme_mode": bg_style,
+                "solid_color": solid_hex,
+                "ambient_opacity": getattr(self, "_ambient_opacity", 0.24),
+            }
+            if hasattr(self, "_floating_center") and self._floating_center:
+                updates["floating_x"] = float(self._floating_center.x())
+                updates["floating_y"] = float(self._floating_center.y())
+            settings.update(updates)
+        except Exception as e:
+            import logging
+            logging.error(f"Error saving island settings: {e}")
 
     # -------------------------------------------------------------
     # State Management & Auto-Hide
@@ -1223,6 +1387,37 @@ class DynamicIslandWidget(QWidget):
             self.set_glow_state("reminders")
         else:
             self.set_glow_state("idle")
+
+    def _get_time_colors(self) -> Tuple[QColor, QColor]:
+        """
+        Returns (col_hr, col_min) for prominent dual-color clock rendering.
+        Hours: Crisp pure white (#FFFFFF).
+        Minutes: Vibrant accent color derived from track artwork, or dynamic amber (#FF9F0A).
+        """
+        col_hr = QColor(255, 255, 255)
+        accent_hex = self._media_info.get("accent_color")
+        if accent_hex and self._media_info.get("is_playing", False):
+            c = QColor(accent_hex)
+            h, s, v, _ = c.getHsv()
+            v = max(v, 225)
+            s = max(min(s, 220), 130)
+            col_min = QColor.fromHsv(h, s, v)
+        else:
+            col_min = QColor("#FF9F0A")  # Apple Watch vibrant amber
+        return col_hr, col_min
+
+    def _get_24h_time_parts(self) -> Tuple[str, str]:
+        """
+        Returns (hh, mm) in 24-hour format with guaranteed 2 digits (e.g. '15', '49' or '03', '05').
+        """
+        try:
+            now = datetime.datetime.now()
+            return now.strftime("%H"), now.strftime("%M")
+        except Exception:
+            parts = self._time_str.split(" ")[0].split(":")
+            hh = parts[0].zfill(2) if len(parts) > 0 else "00"
+            mm = parts[1].zfill(2) if len(parts) > 1 else "00"
+            return hh, mm
 
     # -------------------------------------------------------------
     # Frosted Glass Album Art Generator & Accent Extractor
@@ -1847,7 +2042,8 @@ class DynamicIslandWidget(QWidget):
             if hasattr(self, "system_service"):
                 try:
                     bands, _ = self.system_service.get_audio_spectrum()
-                    if bands and len(bands) >= 22 and max(bands) > 0.005:
+                    max_b_val = max(bands) if bands else 0.0
+                    if bands and len(bands) >= 22 and max_b_val > 0.0004:
                         has_real_bands = True
                         # Real hardware multi-band frequency mapping:
                         b0 = max(bands[0:5])    # Sub-bass / Kick
@@ -1860,7 +2056,7 @@ class DynamicIslandWidget(QWidget):
                             self._mini_eq_peak += (max_b - self._mini_eq_peak) * 0.35
                         else:
                             self._mini_eq_peak += (max_b - self._mini_eq_peak) * 0.02
-                        eq_gain = 1.0 / max(0.12, min(1.0, self._mini_eq_peak))
+                        eq_gain = 1.0 / max(0.015, min(1.0, self._mini_eq_peak))
 
                         targets = [
                             max(0.15, min(1.0, 0.08 + (b0 * eq_gain) * 0.92)),
@@ -1896,18 +2092,18 @@ class DynamicIslandWidget(QWidget):
                     has_real_bands = False
 
             if not has_real_bands:
-                # Ambient fallback
-                self._mini_eq_phase += 0.15
-                self._mini_eq_heights[0] = 0.20 + 0.15 * abs(math.sin(self._mini_eq_phase))
-                self._mini_eq_heights[1] = 0.24 + 0.18 * abs(math.sin(self._mini_eq_phase * 1.3 + 1.0))
-                self._mini_eq_heights[2] = 0.22 + 0.16 * abs(math.cos(self._mini_eq_phase * 0.9 + 2.0))
-                self._mini_eq_heights[3] = 0.18 + 0.14 * abs(math.sin(self._mini_eq_phase * 1.5 + 0.5))
+                # Organic dynamic fallback when stream volume is low or in quiet passages
+                self._mini_eq_phase += 0.12
+                self._mini_eq_heights[0] = 0.25 + 0.55 * abs(math.sin(self._mini_eq_phase * 1.1))
+                self._mini_eq_heights[1] = 0.30 + 0.60 * abs(math.sin(self._mini_eq_phase * 1.4 + 1.2))
+                self._mini_eq_heights[2] = 0.28 + 0.58 * abs(math.cos(self._mini_eq_phase * 1.0 + 2.0))
+                self._mini_eq_heights[3] = 0.22 + 0.50 * abs(math.sin(self._mini_eq_phase * 1.6 + 0.5))
 
                 if not hasattr(self, "_vertical_eq_heights") or len(self._vertical_eq_heights) != 12:
                     self._vertical_eq_heights = [0.15] * 12
                 for idx in range(12):
-                    wave = 0.16 + 0.14 * abs(math.sin(self._mini_eq_phase * (0.8 + idx * 0.15) + idx * 0.6))
-                    self._vertical_eq_heights[idx] += (wave - self._vertical_eq_heights[idx]) * 0.15
+                    wave = 0.20 + 0.65 * abs(math.sin(self._mini_eq_phase * (0.75 + idx * 0.12) + idx * 0.55))
+                    self._vertical_eq_heights[idx] += (wave - self._vertical_eq_heights[idx]) * 0.25
                 self._corner_eq_heights = self._vertical_eq_heights
 
         # Liquid morphing interpolation (lerp factor 0.18 for viscous fluid morphing)
@@ -2179,6 +2375,7 @@ class DynamicIslandWidget(QWidget):
             if self._is_dragging:
                 self._is_dragging = False
                 self._drag_start_global = None
+                self._hovered = self.rect().contains(self.mapFromGlobal(QCursor.pos()))
 
                 center = self.geometry().center()
                 screen = QGuiApplication.screenAt(center) or QGuiApplication.primaryScreen()
@@ -2233,6 +2430,7 @@ class DynamicIslandWidget(QWidget):
 
                 # Settle cleanly into docked position with smooth spring easing
                 self._apply_geometry_for_state(self._island_state, animate=True)
+                self.save_current_settings()
                 if self._island_state == "compact":
                     self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
                 else:
@@ -2287,43 +2485,59 @@ class DynamicIslandWidget(QWidget):
         morph = max(0.0, min(1.0, getattr(self, "_dock_morph", 1.0)))
         edge = getattr(self, "_dock_edge", "top")
         r_cap = min(h / 2.0, 22.0)
+        p = self.get_expand_progress()
 
         if self._island_state == "compact":
-            r_bot = NOTCH_RADIUS_BOT
+            target_r_bot = NOTCH_RADIUS_BOT
             base_r_ear = NOTCH_RADIUS_TOP
         elif self._island_state == "device_popup":
-            r_bot = 32.0
+            target_r_bot = 32.0
             base_r_ear = NOTCH_RADIUS_TOP
         elif self._island_state == "osd_hud":
-            r_bot = OSD_HUD_R_BOT
+            target_r_bot = OSD_HUD_R_BOT
             base_r_ear = OSD_HUD_R_TOP
         elif self._island_state == "toast":
-            r_bot = TOAST_R_BOT
+            target_r_bot = TOAST_R_BOT
             base_r_ear = TOAST_R_TOP
         elif self._island_state == "call_live":
-            r_bot = CALL_LIVE_R_BOT
+            target_r_bot = CALL_LIVE_R_BOT
             base_r_ear = CALL_LIVE_R_TOP
         elif self._island_state == "otp_pill":
-            r_bot = OTP_PILL_R_BOT
+            target_r_bot = OTP_PILL_R_BOT
             base_r_ear = OTP_PILL_R_TOP
         elif self._island_state == "file_shelf":
-            r_bot = FILE_SHELF_R_BOT
+            target_r_bot = FILE_SHELF_R_BOT
             base_r_ear = FILE_SHELF_R_TOP
         else:
-            r_bot = EXPANDED_RADIUS
+            target_r_bot = EXPANDED_RADIUS
             base_r_ear = NOTCH_RADIUS_TOP
+
+        # Smoothly interpolate corner radius with expand_progress so it never pops
+        r_bot = NOTCH_RADIUS_BOT + (target_r_bot - NOTCH_RADIUS_BOT) * p
 
         path = QPainterPath()
 
         if edge == "top":
             r_ear = base_r_ear * morph
+            cur_r_bot = r_bot
+            max_sum_h = max(4.0, h - 2.0)
+            if r_ear + cur_r_bot > max_sum_h:
+                scale = max_sum_h / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+            max_sum_w = max(4.0, w / 2.0 - 2.0)
+            if r_ear + cur_r_bot > max_sum_w:
+                scale = max_sum_w / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+
             if r_ear > 0.5:
                 path.moveTo(0, 0)
                 path.cubicTo(r_ear * 0.4, 0, r_ear, r_ear * 0.4, r_ear, r_ear)
-                path.lineTo(r_ear, h - r_bot)
-                path.quadTo(r_ear, h, r_ear + r_bot, h)
-                path.lineTo(w - r_ear - r_bot, h)
-                path.quadTo(w - r_ear, h, w - r_ear, h - r_bot)
+                path.lineTo(r_ear, h - cur_r_bot)
+                path.quadTo(r_ear, h, r_ear + cur_r_bot, h)
+                path.lineTo(w - r_ear - cur_r_bot, h)
+                path.quadTo(w - r_ear, h, w - r_ear, h - cur_r_bot)
                 path.lineTo(w - r_ear, r_ear)
                 path.cubicTo(w - r_ear, r_ear * 0.4, w - r_ear * 0.4, 0, w, 0)
                 path.lineTo(0, 0)
@@ -2332,13 +2546,25 @@ class DynamicIslandWidget(QWidget):
 
         elif edge == "bottom":
             r_ear = base_r_ear * morph
+            cur_r_bot = r_bot
+            max_sum_h = max(4.0, h - 2.0)
+            if r_ear + cur_r_bot > max_sum_h:
+                scale = max_sum_h / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+            max_sum_w = max(4.0, w / 2.0 - 2.0)
+            if r_ear + cur_r_bot > max_sum_w:
+                scale = max_sum_w / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+
             if r_ear > 0.5:
                 path.moveTo(0, h)
                 path.cubicTo(r_ear * 0.4, h, r_ear, h - r_ear * 0.4, r_ear, h - r_ear)
-                path.lineTo(r_ear, r_bot)
-                path.quadTo(r_ear, 0, r_ear + r_bot, 0)
-                path.lineTo(w - r_ear - r_bot, 0)
-                path.quadTo(w - r_ear, 0, w - r_ear, r_bot)
+                path.lineTo(r_ear, cur_r_bot)
+                path.quadTo(r_ear, 0, r_ear + cur_r_bot, 0)
+                path.lineTo(w - r_ear - cur_r_bot, 0)
+                path.quadTo(w - r_ear, 0, w - r_ear, cur_r_bot)
                 path.lineTo(w - r_ear, h - r_ear)
                 path.cubicTo(w - r_ear, h - r_ear * 0.4, w - r_ear * 0.4, h, w, h)
                 path.lineTo(0, h)
@@ -2347,14 +2573,26 @@ class DynamicIslandWidget(QWidget):
 
         elif edge == "left":
             r_ear = base_r_ear * morph
+            cur_r_bot = r_bot
+            max_sum_w = max(4.0, w - 2.0)
+            if r_ear + cur_r_bot > max_sum_w:
+                scale = max_sum_w / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+            max_sum_h = max(4.0, h / 2.0 - 2.0)
+            if r_ear + cur_r_bot > max_sum_h:
+                scale = max_sum_h / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+
             if r_ear > 0.5:
                 # Organic bezier ears blending with left screen bezel
                 path.moveTo(0, 0)
                 path.cubicTo(0, r_ear * 0.4, r_ear * 0.4, r_ear, r_ear, r_ear)
-                path.lineTo(w - r_bot, r_ear)
-                path.quadTo(w, r_ear, w, r_ear + r_bot)
-                path.lineTo(w, h - r_ear - r_bot)
-                path.quadTo(w, h - r_ear, w - r_bot, h - r_ear)
+                path.lineTo(w - cur_r_bot, r_ear)
+                path.quadTo(w, r_ear, w, r_ear + cur_r_bot)
+                path.lineTo(w, h - r_ear - cur_r_bot)
+                path.quadTo(w, h - r_ear, w - cur_r_bot, h - r_ear)
                 path.lineTo(r_ear, h - r_ear)
                 path.cubicTo(r_ear * 0.4, h - r_ear, 0, h - r_ear * 0.4, 0, h)
                 path.lineTo(0, 0)
@@ -2363,14 +2601,26 @@ class DynamicIslandWidget(QWidget):
 
         elif edge == "right":
             r_ear = base_r_ear * morph
+            cur_r_bot = r_bot
+            max_sum_w = max(4.0, w - 2.0)
+            if r_ear + cur_r_bot > max_sum_w:
+                scale = max_sum_w / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+            max_sum_h = max(4.0, h / 2.0 - 2.0)
+            if r_ear + cur_r_bot > max_sum_h:
+                scale = max_sum_h / (r_ear + cur_r_bot)
+                r_ear = max(1.0, r_ear * scale)
+                cur_r_bot = max(1.0, cur_r_bot * scale)
+
             if r_ear > 0.5:
                 # Organic bezier ears blending with right screen bezel
                 path.moveTo(w, 0)
                 path.cubicTo(w, r_ear * 0.4, w - r_ear * 0.4, r_ear, w - r_ear, r_ear)
-                path.lineTo(r_bot, r_ear)
-                path.quadTo(0, r_ear, 0, r_ear + r_bot)
-                path.lineTo(0, h - r_ear - r_bot)
-                path.quadTo(0, h - r_ear, r_bot, h - r_ear)
+                path.lineTo(cur_r_bot, r_ear)
+                path.quadTo(0, r_ear, 0, r_ear + cur_r_bot)
+                path.lineTo(0, h - r_ear - cur_r_bot)
+                path.quadTo(0, h - r_ear, cur_r_bot, h - r_ear)
                 path.lineTo(w - r_ear, h - r_ear)
                 path.cubicTo(w - r_ear * 0.4, h - r_ear, w, h - r_ear * 0.4, w, h)
                 path.lineTo(w, 0)
@@ -2508,6 +2758,26 @@ class DynamicIslandWidget(QWidget):
         return path
 
     def paintEvent(self, event):
+        try:
+            self._do_paint(event)
+        except Exception:
+            try:
+                import traceback
+                err = traceback.format_exc()
+                log_file = os.path.join(os.path.expanduser("~"), "DynamicIsland_crash.log")
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- PAINT GLITCH CAUGHT {time.ctime()} ---\n{err}\n")
+            except Exception:
+                pass
+            try:
+                p = QPainter(self)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                p.fillRect(0, 0, self.width(), self.height(), QColor(10, 10, 14, 240))
+                p.end()
+            except Exception:
+                pass
+
+    def _do_paint(self, event):
         painter = QPainter(self)
         # Maximum quality rendering hints for smooth text and graphics
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -2585,17 +2855,13 @@ class DynamicIslandWidget(QWidget):
             painter.drawLine(QPointF(0, h - 0.75), QPointF(w, h - 0.75))
 
         # 5. State-Specific Content
-        if self._island_state == "compact" or self.get_expand_progress() < 0.35:
+        p = self.get_expand_progress()
+        compact_alpha = max(0.0, min(1.0, (0.28 - p) / 0.28))
+        if compact_alpha > 0.01:
             painter.save()
+            painter.setOpacity(compact_alpha)
             self._paint_compact_notch(painter, w, h)
             painter.restore()
-        elif self._island_state == "expanded" and h < 70 and getattr(self, "_dock_edge", "top") in ("top", "bottom", "floating"):
-            fade = max(0.0, min(1.0, 1.0 - (h - 30.0) / 28.0))
-            if fade > 0.02:
-                painter.save()
-                painter.setOpacity(fade)
-                self._paint_compact_notch(painter, w, h)
-                painter.restore()
         elif self._island_state == "toast":
             self._paint_toast_notch(painter, w, h)
         elif self._island_state == "device_popup":
@@ -2839,7 +3105,7 @@ class DynamicIslandWidget(QWidget):
         start_y = eq_area_top + (eq_h_avail - total_v_h) / 2.0
         center_x = v_arm_x + arm_w / 2.0
         min_w = 4.0
-        max_w = arm_w - 12.0  # 24.0 px
+        max_w = arm_w - 8.0  # 28.0 px
 
         accent_hex = self._media_info.get("accent_color", "#FFFFFF")
         accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
@@ -2872,18 +3138,16 @@ class DynamicIslandWidget(QWidget):
         painter.restore()
 
         # Stacked Digital Clock
-        time_parts = self._time_str.split(" ")[0].split(":")
-        hh = time_parts[0] if len(time_parts) > 0 else "12"
-        mm = time_parts[1] if len(time_parts) > 1 else "00"
+        hh, mm = self._get_24h_time_parts()
 
+        col_hr, col_min = self._get_time_colors()
         painter.save()
-        painter.setFont(get_subtext_font(9.0))
-        painter.setPen(COLOR_TEXT_PRIMARY)
-        painter.drawText(QRectF(v_arm_x, clock_y, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, hh)
+        painter.setFont(get_display_font(11.0))
+        painter.setPen(col_hr)
+        painter.drawText(QRectF(v_arm_x, clock_y, arm_w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
 
-        painter.setFont(get_subtext_font(8.5))
-        painter.setPen(QColor(255, 255, 255, 175))
-        painter.drawText(QRectF(v_arm_x, clock_y + 11.5, arm_w, 12.0), Qt.AlignmentFlag.AlignCenter, mm)
+        painter.setPen(col_min)
+        painter.drawText(QRectF(v_arm_x, clock_y + 13.5, arm_w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
         painter.restore()
 
         painter.restore()
@@ -2951,18 +3215,16 @@ class DynamicIslandWidget(QWidget):
             # Bottom ear curve starts at h - r_ear (h - 18.0).
             # Placing clock_y at h - 58.0 ensures hh and mm are in the full-width parallel section.
             clock_y = h - 58.0
-            time_parts = self._time_str.split(" ")[0].split(":")
-            hh = time_parts[0] if len(time_parts) > 0 else "12"
-            mm = time_parts[1] if len(time_parts) > 1 else "00"
+            hh, mm = self._get_24h_time_parts()
 
+            col_hr, col_min = self._get_time_colors()
             painter.save()
-            painter.setFont(get_subtext_font(10.0))
-            painter.setPen(COLOR_TEXT_PRIMARY)
-            painter.drawText(QRectF(0, clock_y, w, 13.0), Qt.AlignmentFlag.AlignCenter, hh)
+            painter.setFont(get_display_font(11.5))
+            painter.setPen(col_hr)
+            painter.drawText(QRectF(0, clock_y, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
 
-            painter.setFont(get_subtext_font(9.5))
-            painter.setPen(QColor(255, 255, 255, 195))
-            painter.drawText(QRectF(0, clock_y + 13.0, w, 13.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(0, clock_y + 14.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
             painter.restore()
 
             # ── 2. Middle: Vertical 12-Band Audio Spectrum Visualizer ─
@@ -2979,7 +3241,7 @@ class DynamicIslandWidget(QWidget):
             start_y = eq_area_top + (avail_h - total_v_h) / 2.0
             center_x = w / 2.0
             min_w = 4.0
-            max_w = max(min_w, w - 10.0)  # ~22.0 px for w=32
+            max_w = max(min_w, w - 8.0)  # ~24.0 px for w=32
 
             accent_hex = self._media_info.get("accent_color", "#FFFFFF")
             accent_col = QColor(accent_hex) if accent_hex else QColor(255, 255, 255)
@@ -3011,17 +3273,16 @@ class DynamicIslandWidget(QWidget):
 
         else:
             # ── Idle Mode: Vertical Stacked Clock & Battery Indicator ──
-            time_parts = self._time_str.split(" ")[0].split(":")
-            hh = time_parts[0] if len(time_parts) > 0 else "12"
-            mm = time_parts[1] if len(time_parts) > 1 else "00"
+            hh, mm = self._get_24h_time_parts()
 
+            col_hr, col_min = self._get_time_colors()
             painter.save()
-            t_font = get_subtext_font(10.0)
+            t_font = get_display_font(12.0)
             painter.setFont(t_font)
-            painter.setPen(COLOR_TEXT_PRIMARY)
-            painter.drawText(QRectF(0, r_ear + 6.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, hh)
-            painter.setPen(QColor(255, 255, 255, 185))
-            painter.drawText(QRectF(0, r_ear + 20.0, w, 14.0), Qt.AlignmentFlag.AlignCenter, mm)
+            painter.setPen(col_hr)
+            painter.drawText(QRectF(0, r_ear + 6.0, w, 15.0), Qt.AlignmentFlag.AlignCenter, hh)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(0, r_ear + 21.0, w, 15.0), Qt.AlignmentFlag.AlignCenter, mm)
 
             # Minimal ambient dot ladder in center
             center_x = w / 2.0
@@ -3073,30 +3334,33 @@ class DynamicIslandWidget(QWidget):
             content_left = 14.0
             content_right = w - 14.0
 
-        # ── Left: Time ───────────────────────────────────────────
-        time_parts = self._time_str.split(" ")
-        hhmm = time_parts[0]
-        ampm = time_parts[1] if len(time_parts) > 1 else ""
+        # ── Left: Time (24-hour) ─────────────────────────────────
+        hh, mm = self._get_24h_time_parts()
+        col_hr, col_min = self._get_time_colors()
 
-        # Draw HH:MM using QRectF for subpixel-accurate vertical centering
-        time_font = get_display_font(10.5)
+        time_font = get_display_font(11.0)
         painter.setFont(time_font)
-        painter.setPen(COLOR_TEXT_PRIMARY)
         fm_time = QFontMetrics(time_font)
-        tw = fm_time.horizontalAdvance(hhmm)
-
         text_h = fm_time.height()
-        time_rect = QRectF(content_left, (h - text_h) / 2.0, tw + 2.0, text_h)
-        painter.drawText(time_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, hhmm)
+        y_text = (h - text_h) / 2.0
 
-        # Draw AM/PM suffix
-        ampm_font = get_microlabel_font()
-        painter.setFont(ampm_font)
-        painter.setPen(COLOR_TEXT_MUTED)
-        fm_ampm = QFontMetrics(ampm_font)
-        ampm_w = fm_ampm.horizontalAdvance(ampm)
-        ampm_rect = QRectF(content_left + tw + 3.0, (h - fm_ampm.height()) / 2.0, ampm_w + 2.0, fm_ampm.height())
-        painter.drawText(ampm_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ampm)
+        hh_w = fm_time.horizontalAdvance(hh)
+        painter.setPen(col_hr)
+        painter.drawText(QRectF(content_left, y_text, hh_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, hh)
+
+        cur_x = content_left + hh_w
+        if mm:
+            colon_w = fm_time.horizontalAdvance(":")
+            painter.setPen(QColor(255, 255, 255, 140))
+            painter.drawText(QRectF(cur_x, y_text, colon_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, ":")
+            cur_x += colon_w
+
+            mm_w = fm_time.horizontalAdvance(mm)
+            painter.setPen(col_min)
+            painter.drawText(QRectF(cur_x, y_text, mm_w + 1.0, text_h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, mm)
+            cur_x += mm_w
+
+        tw = cur_x - content_left
 
         has_media = bool(self._media_info.get("has_media", False))
         if not has_media:
@@ -3126,7 +3390,7 @@ class DynamicIslandWidget(QWidget):
             art_h = 20.0
             art_rad = 5.0
 
-        art_x = content_left + tw + ampm_w + 10.0
+        art_x = content_left + tw + 10.0
         art_y = (h - art_h) / 2.0
         art_rect = QRectF(art_x, art_y, art_w, art_h)
 
@@ -5131,6 +5395,7 @@ class DynamicIslandWidget(QWidget):
         else:
             self._auto_hide_enabled = bool(enabled)
         self._apply_geometry_for_state(self._island_state, animate=True)
+        self.save_current_settings()
         self.update()
 
     def set_phone_battery(self, pct: int):
