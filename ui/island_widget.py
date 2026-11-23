@@ -831,6 +831,8 @@ class DynamicIslandWidget(QWidget):
                 if not self.isVisible():
                     self.show()
                     self.raise_()
+        elif not self._is_fullscreen_suppressed and self.isVisible():
+            self._ensure_behind_taskbar()
 
     def wake_up(self):
         """Forces the Dynamic Island to become visible, raise to top, and expand."""
@@ -854,6 +856,42 @@ class DynamicIslandWidget(QWidget):
         self.setStyleSheet(DASHBOARD_STYLESHEET)
         self.setMouseTracking(True)
         self.setAcceptDrops(True)
+
+    def _ensure_behind_taskbar(self):
+        """
+        Ensures Dynamic Island is placed immediately behind the Windows Taskbar in Z-order.
+        Keeps Dynamic Island topmost over all standard application windows, but allows the
+        Windows Taskbar (Shell_TrayWnd) to sit on top so taskbar icons are never obstructed.
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            tray = user32.FindWindowW("Shell_TrayWnd", None)
+            if not tray:
+                hdesk = user32.OpenDesktopW("default", 0, False, 0x01FF)
+                if hdesk:
+                    old_desk = user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+                    user32.SetThreadDesktop(hdesk)
+                    tray = user32.FindWindowW("Shell_TrayWnd", None)
+                    user32.SetThreadDesktop(old_desk)
+                    user32.CloseDesktop(hdesk)
+            if tray:
+                hwnd = int(self.winId())
+                if hwnd and tray != hwnd:
+                    SWP_NOMOVE = 0x0002
+                    SWP_NOSIZE = 0x0001
+                    SWP_NOACTIVATE = 0x0010
+                    user32.SetWindowPos(hwnd, tray, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+        except Exception:
+            pass
+
+    def raise_(self):
+        super().raise_()
+        self._ensure_behind_taskbar()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_behind_taskbar()
 
     def _get_target_rect(self, state: str) -> tuple[int, int, int, int]:
         cur_center = self.geometry().center()
@@ -1039,6 +1077,7 @@ class DynamicIslandWidget(QWidget):
     def _on_geo_anim_finished(self):
         target = getattr(self, "_anim_target_state", self._island_state)
         self._update_child_visibility(target)
+        self._ensure_behind_taskbar()
 
     def _apply_geometry_for_state(self, state: str, animate=True):
         x, y, w, h = self._get_target_rect(state)
@@ -1048,6 +1087,7 @@ class DynamicIslandWidget(QWidget):
             self.setGeometry(x, y, w, h)
             self.set_expand_progress(1.0 if state == "expanded" else 0.0)
             self._update_child_visibility(state)
+            self._ensure_behind_taskbar()
             return
 
         if self._geo_animation and self._geo_animation.state() == QPropertyAnimation.State.Running:
@@ -2430,6 +2470,7 @@ class DynamicIslandWidget(QWidget):
 
                 # Settle cleanly into docked position with smooth spring easing
                 self._apply_geometry_for_state(self._island_state, animate=True)
+                self._ensure_behind_taskbar()
                 self.save_current_settings()
                 if self._island_state == "compact":
                     self.setCursor(QCursor(Qt.CursorShape.OpenHandCursor))
@@ -3071,11 +3112,13 @@ class DynamicIslandWidget(QWidget):
             painter.setFont(get_subtext_font(8.5))
             painter.setPen(COLOR_TEXT_PRIMARY)
             date_str = getattr(self, "_date_str", "Dynamic Island")
-            painter.drawText(QRectF(h_start_x, top_y_base + 4.0, h_arm_w, 13.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, date_str)
+            fm_d = QFontMetrics(painter.font())
+            painter.drawText(QRectF(h_start_x, top_y_base + 4.0, h_arm_w, 13.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, fm_d.elidedText(date_str, Qt.TextElideMode.ElideRight, int(h_arm_w)))
 
             painter.setFont(get_microlabel_font())
             painter.setPen(QColor(255, 255, 255, 150))
-            painter.drawText(QRectF(h_start_x, top_y_base + 18.0, h_arm_w, 12.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "Ready · Standing By")
+            fm_s = QFontMetrics(painter.font())
+            painter.drawText(QRectF(h_start_x, top_y_base + 18.0, h_arm_w, 12.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, fm_s.elidedText("Ready · Standing By", Qt.TextElideMode.ElideRight, int(h_arm_w)))
             painter.restore()
 
         # ── 3. Vertical Arm: Audio Spectrum Visualizer + Clock/Battery ─
